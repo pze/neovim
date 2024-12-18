@@ -287,6 +287,7 @@ PERFORMANCE
   highlighting.
 • LSP diagnostics and inlay hints are de-duplicated (new requests cancel
   inflight requests). This greatly improves performance with slow LSP servers.
+• Treesitter highlighting is now asynchronous.
 
 PLUGINS
 
@@ -328,6 +329,8 @@ TREESITTER
 • New |TSNode:child_with_descendant()|, which is nearly identical to
   |TSNode:child_containing_descendant()| except that it can return the
   descendant itself.
+• |LanguageTree:parse()| optionally supports asynchronous invocation, which is
+  activated by passing the `on_parse` callback parameter.
 
 TUI
 
