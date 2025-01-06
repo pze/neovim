@@ -195,7 +195,7 @@ func s:GetFilenameChecks() abort
     \ 'crm': ['file.crm'],
     \ 'crontab': ['crontab', 'crontab.file', '/etc/cron.d/file', 'any/etc/cron.d/file'],
     \ 'crystal': ['file.cr'],
-    \ 'cs': ['file.cs', 'file.csx'],
+    \ 'cs': ['file.cs', 'file.csx', 'file.cake'],
     \ 'csc': ['file.csc'],
     \ 'csdl': ['file.csdl'],
     \ 'csp': ['file.csp', 'file.fdr'],
@@ -389,7 +389,7 @@ func s:GetFilenameChecks() abort
     \ 'jess': ['file.clp'],
     \ 'jgraph': ['file.jgr'],
     \ 'jinja': ['file.jinja'],
-    \ 'jj': ['file.jjdescription'],
+    \ 'jjdescription': ['file.jjdescription'],
     \ 'jovial': ['file.jov', 'file.j73', 'file.jovial'],
     \ 'jproperties': ['file.properties', 'file.properties_xx', 'file.properties_xx_xx', 'some.properties_xx_xx_file', 'org.eclipse.xyz.prefs'],
     \ 'jq': ['file.jq'],
@@ -2296,6 +2296,27 @@ func Test_cls_file()
   call writefile(['VERSION 1.0 CLASS'], 'Xfile.cls')
   split Xfile.cls
   call assert_equal('vb', &filetype)
+  bwipe!
+
+  filetype off
+endfunc
+
+func Test_cmd_file()
+  filetype on
+
+  call writefile(['--rom_model'], 'Xfile.cmd')
+  split Xfile.cmd
+  call assert_equal('lnk', &filetype)
+  bwipe!
+
+  call writefile(['/* comment */'], 'Xfile.cmd')
+  split Xfile.cmd
+  call assert_equal('rexx', &filetype)
+  bwipe!
+
+  call writefile(['REM comment'], 'Xfile.cmd')
+  split Xfile.cmd
+  call assert_equal('dosbatch', &filetype)
   bwipe!
 
   filetype off
