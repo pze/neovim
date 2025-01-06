@@ -408,12 +408,15 @@ end
 --- })
 --- ```
 ---
----@param bufnr (integer|nil) Buffer to be highlighted (default: current buffer)
----@param lang (string|nil) Language of the parser (default: from buffer filetype)
-function M.start(bufnr, lang)
+---@param bufnr integer? Buffer to be highlighted (default: current buffer)
+---@param lang string? Language of the parser (default: from buffer filetype)
+---@param opts table? Options to pass to the highlighter
+---          - sync (`boolean?`) Whether to use synchronous parsing in the highlighter. Default
+---          `false`.
+function M.start(bufnr, lang, opts)
   bufnr = vim._resolve_bufnr(bufnr)
   local parser = assert(M.get_parser(bufnr, lang, { error = false }))
-  M.highlighter.new(parser)
+  M.highlighter.new(parser, opts)
 end
 
 --- Stops treesitter highlighting for a buffer

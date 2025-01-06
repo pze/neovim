@@ -1081,7 +1081,7 @@ node_contains({node}, {range})                *vim.treesitter.node_contains()*
     Return: ~
         (`boolean`) True if the {node} contains the {range}
 
-start({bufnr}, {lang})                                *vim.treesitter.start()*
+start({bufnr}, {lang}, {opts})                        *vim.treesitter.start()*
     Starts treesitter highlighting for a buffer
 
     Can be used in an ftplugin or FileType autocommand.
@@ -1107,6 +1107,9 @@ start({bufnr}, {lang})                                *vim.treesitter.start()*
                  buffer)
       • {lang}   (`string?`) Language of the parser (default: from buffer
                  filetype)
+      • {opts}   (`table?`) Options to pass to the highlighter
+                 • sync (`boolean?`) Whether to use synchronous parsing in the
+                   highlighter. Default `false`.
 
 stop({bufnr})                                          *vim.treesitter.stop()*
     Stops treesitter highlighting for a buffer
@@ -1630,14 +1633,14 @@ LanguageTree:parse({range}, {on_parse})                 *LanguageTree:parse()*
                     source (Note: Can be slow!) Set to `false|nil` to only
                     parse regions with empty ranges (typically only the root
                     tree without injections).
-      • {on_parse}  (`fun(trees?: table<integer, TSTree>, err?: string)?`)
+      • {on_parse}  (`fun(err?: string, trees?: table<integer, TSTree>)?`)
                     Function invoked when parsing completes. When provided,
                     parsing will run asynchronously. The first argument to the
-                    function is the list of trees returned by the parse (upon
-                    success), or `nil` if the parse timed out (determined by
-                    'redrawtime'). In the case of a failure, a string
-                    representing the error type will also be passed to the
-                    callback (currently only possible for timeouts).
+                    function is a string respresenting the error type, in case
+                    of a failure (currently only possible for timeouts). The
+                    second argument is the list of trees returned by the parse
+                    (upon success), or `nil` if the parse timed out
+                    (determined by 'redrawtime').
 
                     If parsing was still able to finish synchronously (within
                     3ms), `parse()` returns the list of trees. Otherwise, it

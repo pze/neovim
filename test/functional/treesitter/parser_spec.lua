@@ -100,7 +100,7 @@ describe('treesitter parser API', function()
     exec_lua(function()
       _G.parser = vim.treesitter.get_parser(0, 'c')
       _G.lang = vim.treesitter.language.inspect('c')
-      _G.parser:parse(nil, function(trees)
+      _G.parser:parse(nil, function(_, trees)
         _G.tree = trees[1]
         _G.root = _G.tree:root()
       end)
@@ -137,7 +137,7 @@ describe('treesitter parser API', function()
 
     feed('2G7|ay')
     exec_lua(function()
-      _G.parser:parse(nil, function(trees)
+      _G.parser:parse(nil, function(_, trees)
         _G.tree2 = trees[1]
         _G.root2 = _G.tree2:root()
         _G.descendant2 = _G.root2:descendant_for_range(1, 2, 1, 13)
@@ -242,6 +242,44 @@ describe('treesitter parser API', function()
     eq(true, exec_lua([[return done]]))
     eq('comment', exec_lua([[return parser:parse()[1]:root():named_child(2):type()]]))
     eq({ 2, 0, 2, 10 }, exec_lua([[return {parser:parse()[1]:root():named_child(2):range()}]]))
+  end)
+
+  it('handles multiple async parse calls', function()
+    insert([[printf("%s", "some text");]])
+    feed('yy49999p')
+
+    exec_lua(function()
+      -- Spy on vim.schedule
+      local schedule = vim.schedule
+      vim.schedule = function(fn)
+        _G.schedules = _G.schedules + 1
+        schedule(fn)
+      end
+      _G.schedules = 0
+      _G.parser = vim.treesitter.get_parser(0, 'c')
+      for i = 1, 5 do
+        _G['done' .. i] = false
+        _G.parser:parse(nil, function()
+          _G['done' .. i] = true
+        end)
+      end
+      schedule(function()
+        _G.schedules_snapshot = _G.schedules
+      end)
+    end)
+
+    eq(2, exec_lua([[return schedules_snapshot]]))
+    eq(
+      { false, false, false, false, false },
+      exec_lua([[return { done1, done2, done3, done4, done5 }]])
+    )
+    exec_lua(function()
+      while not _G.done1 do
+        -- Busy wait until async parsing finishes
+        vim.wait(100, function() end)
+      end
+    end)
+    eq({ true, true, true, true, true }, exec_lua([[return { done1, done2, done3, done4, done5 }]]))
   end)
 
   local test_text = [[
