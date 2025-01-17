@@ -461,12 +461,12 @@ describe('treesitter highlighting (C)', function()
       local parser = vim.treesitter.get_parser(0, 'c')
       local query = vim.treesitter.query.parse('c', '(declaration) @decl')
 
-      local nodes = {}
+      local region = {}
       for _, node in query:iter_captures(parser:parse()[1]:root(), 0, 0, 19) do
-        table.insert(nodes, node)
+        table.insert(region, { node:range(true) })
       end
 
-      parser:set_included_regions({ nodes })
+      parser:set_included_regions({ region })
 
       vim.treesitter.highlighter.new(parser, { queries = { c = '(identifier) @type' } })
     end)
@@ -503,7 +503,17 @@ describe('treesitter highlighting (C)', function()
     exec_lua(function()
       local parser = vim.treesitter.get_parser(0, 'c', {
         injections = {
-          c = '(preproc_def (preproc_arg) @injection.content (#set! injection.language "c")) (preproc_function_def value: (preproc_arg) @injection.content (#set! injection.language "c"))',
+          c = [[
+            (preproc_def
+              (preproc_arg) @injection.content
+              (#set! nvim.injection-root @injection.content)
+              (#set! injection.language "c"))
+
+            (preproc_function_def
+              value: (preproc_arg) @injection.content
+              (#set! nvim.injection-root @injection.content)
+              (#set! injection.language "c"))
+          ]],
         },
       })
       local highlighter = vim.treesitter.highlighter
@@ -522,7 +532,17 @@ describe('treesitter highlighting (C)', function()
       vim.treesitter.language.register('c', 'foo')
       local parser = vim.treesitter.get_parser(0, 'c', {
         injections = {
-          c = '(preproc_def (preproc_arg) @injection.content (#set! injection.language "foo")) (preproc_function_def value: (preproc_arg) @injection.content (#set! injection.language "foo"))',
+          c = [[
+          (preproc_def
+            (preproc_arg) @injection.content
+            (#set! nvim.injection-root @injection.content)
+            (#set! injection.language "foo"))
+
+            (preproc_function_def
+              value: (preproc_arg) @injection.content
+              (#set! nvim.injection-root @injection.content)
+              (#set! injection.language "foo"))
+          ]],
         },
       })
       local highlighter = vim.treesitter.highlighter
@@ -542,8 +562,17 @@ describe('treesitter highlighting (C)', function()
     ]])
 
     exec_lua(function()
-      local injection_query =
-        '(preproc_def (preproc_arg) @injection.content (#set! injection.language "c")) (preproc_function_def value: (preproc_arg) @injection.content (#set! injection.language "c"))'
+      local injection_query = [[
+        (preproc_def
+          (preproc_arg) @injection.content
+          (#set! nvim.injection-root @injection.content)
+          (#set! injection.language "c"))
+
+        (preproc_function_def
+          value: (preproc_arg) @injection.content
+          (#set! nvim.injection-root @injection.content)
+          (#set! injection.language "c"))
+        ]]
       vim.treesitter.query.set('c', 'highlights', hl_query_c)
       vim.treesitter.query.set('c', 'injections', injection_query)
 
@@ -1005,7 +1034,12 @@ describe('treesitter highlighting (help)', function()
     exec_lua(function()
       local parser = vim.treesitter.get_parser(0, 'lua', {
         injections = {
-          lua = '(string content: (_) @injection.content (#set! injection.language lua))',
+          lua = [[
+           (string
+            content: (_) @injection.content
+            (#set! nvim.injection-root @injection.content)
+            (#set! injection.language lua))
+          ]],
         },
       })
 

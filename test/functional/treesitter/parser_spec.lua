@@ -443,7 +443,7 @@ end]]
     -- As stated here, this only includes the function (thus the whole buffer, without the last line)
     local res2 = exec_lua(function()
       local root = _G.parser:parse()[1]:root()
-      _G.parser:set_included_regions({ { root:child(0) } })
+      _G.parser:set_included_regions({ { { root:child(0):range(true) } } })
       _G.parser:invalidate()
       return { _G.parser:parse(true)[1]:root():range() }
     end)
@@ -453,7 +453,8 @@ end]]
     eq({ { { 0, 0, 0, 18, 1, 512 } } }, exec_lua [[ return parser:included_regions() ]])
 
     local range_tbl = exec_lua(function()
-      _G.parser:set_included_regions { { { 0, 0, 17, 1 } } }
+      local range = require('vim.treesitter._range')
+      _G.parser:set_included_regions { { range.add_bytes(_G.parser:source(), { 0, 0, 17, 1 }) } }
       _G.parser:parse()
       return _G.parser:included_regions()
     end)
@@ -468,12 +469,12 @@ end]]
       local parser = vim.treesitter.get_parser(0, 'c')
       local query = vim.treesitter.query.parse('c', '(declaration) @decl')
 
-      local nodes = {}
+      local region = {}
       for _, node in query:iter_captures(parser:parse()[1]:root(), 0) do
-        table.insert(nodes, node)
+        table.insert(region, { node:range(true) })
       end
 
-      parser:set_included_regions({ nodes })
+      parser:set_included_regions({ region })
 
       local root = parser:parse(true)[1]:root()
 
@@ -553,10 +554,17 @@ int x = INT_MAX;
         exec_lua(function()
           _G.parser = vim.treesitter.get_parser(0, 'c', {
             injections = {
-              c = (
-                '(preproc_def (preproc_arg) @injection.content (#set! injection.language "c")) '
-                .. '(preproc_function_def value: (preproc_arg) @injection.content (#set! injection.language "c"))'
-              ),
+              c = [[
+                (preproc_def
+                  (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.language "c"))
+
+                (preproc_function_def
+                  value: (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.language "c"))
+              ]],
             },
           })
           _G.parser:parse(true)
@@ -566,22 +574,22 @@ int x = INT_MAX;
         eq(5, exec_lua('return #parser:children().c:trees()'))
         eq({
           { 0, 0, 7, 0 }, -- root tree
+          { 1, 26, 1, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
+          { 2, 29, 2, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
           { 3, 14, 3, 17 }, -- VALUE 123
           { 4, 15, 4, 18 }, -- VALUE1 123
           { 5, 15, 5, 18 }, -- VALUE2 123
-          { 1, 26, 1, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
-          { 2, 29, 2, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
         }, get_ranges())
 
         n.feed('ggo<esc>')
         eq(5, exec_lua('return #parser:children().c:trees()'))
         eq({
           { 0, 0, 8, 0 }, -- root tree
+          { 2, 26, 2, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
+          { 3, 29, 3, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
           { 4, 14, 4, 17 }, -- VALUE 123
           { 5, 15, 5, 18 }, -- VALUE1 123
           { 6, 15, 6, 18 }, -- VALUE2 123
-          { 2, 26, 2, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
-          { 3, 29, 3, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
         }, get_ranges())
       end)
     end)
@@ -591,10 +599,19 @@ int x = INT_MAX;
         exec_lua(function()
           _G.parser = vim.treesitter.get_parser(0, 'c', {
             injections = {
-              c = (
-                '(preproc_def (preproc_arg) @injection.content (#set! injection.language "c") (#set! injection.combined)) '
-                .. '(preproc_function_def value: (preproc_arg) @injection.content (#set! injection.language "c") (#set! injection.combined))'
-              ),
+              c = [[
+                (preproc_def
+                  (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.language "c")
+                  (#set! injection.combined))
+
+                (preproc_function_def
+                  value: (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.language "c")
+                  (#set! injection.combined))
+              ]],
             },
           })
           _G.parser:parse(true)
@@ -642,10 +659,17 @@ int x = INT_MAX;
         exec_lua(function()
           _G.parser = vim.treesitter.get_parser(0, 'c', {
             injections = {
-              c = (
-                '(preproc_def (preproc_arg) @injection.content (#set! injection.self)) '
-                .. '(preproc_function_def value: (preproc_arg) @injection.content (#set! injection.self))'
-              ),
+              c = [[
+                (preproc_def
+                  (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.self))
+
+                (preproc_function_def
+                  value: (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.self))
+              ]],
             },
           })
           _G.parser:parse(true)
@@ -655,22 +679,22 @@ int x = INT_MAX;
         eq(5, exec_lua('return #parser:children().c:trees()'))
         eq({
           { 0, 0, 7, 0 }, -- root tree
+          { 1, 26, 1, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
+          { 2, 29, 2, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
           { 3, 14, 3, 17 }, -- VALUE 123
           { 4, 15, 4, 18 }, -- VALUE1 123
           { 5, 15, 5, 18 }, -- VALUE2 123
-          { 1, 26, 1, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
-          { 2, 29, 2, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
         }, get_ranges())
 
         n.feed('ggo<esc>')
         eq(5, exec_lua('return #parser:children().c:trees()'))
         eq({
           { 0, 0, 8, 0 }, -- root tree
+          { 2, 26, 2, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
+          { 3, 29, 3, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
           { 4, 14, 4, 17 }, -- VALUE 123
           { 5, 15, 5, 18 }, -- VALUE1 123
           { 6, 15, 6, 18 }, -- VALUE2 123
-          { 2, 26, 2, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
-          { 3, 29, 3, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
         }, get_ranges())
       end)
     end)
@@ -680,10 +704,18 @@ int x = INT_MAX;
         exec_lua(function()
           _G.parser = vim.treesitter.get_parser(0, 'c', {
             injections = {
-              c = (
-                '(preproc_def ((preproc_arg) @injection.content (#set! injection.language "c") (#offset! @injection.content 0 2 0 -1))) '
-                .. '(preproc_function_def value: (preproc_arg) @injection.content (#set! injection.language "c"))'
-              ),
+              c = [[
+                (preproc_def
+                  (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.language "c")
+                  (#offset! @injection.content 0 2 0 -1))
+
+                (preproc_function_def
+                  value: (preproc_arg) @injection.content
+                  (#set! nvim.injection-root @injection.content)
+                  (#set! injection.language "c"))
+              ]],
             },
           })
           _G.parser:parse(true)
@@ -692,9 +724,6 @@ int x = INT_MAX;
         eq('table', exec_lua('return type(parser:children().c)'))
         eq({
           { 0, 0, 7, 0 }, -- root tree
-          { 3, 16, 3, 16 }, -- VALUE 123
-          { 4, 17, 4, 17 }, -- VALUE1 123
-          { 5, 17, 5, 17 }, -- VALUE2 123
           { 1, 26, 1, 63 }, -- READ_STRING(x, y) (char *)read_string((x), (size_t)(y))
           { 2, 29, 2, 66 }, -- READ_STRING_OK(x, y) (char *)read_string((x), (size_t)(y))
         }, get_ranges())
@@ -727,7 +756,12 @@ int x = INT_MAX;
       local result = exec_lua(function()
         local parser = vim.treesitter.get_parser(0, 'c', {
           injections = {
-            c = '(preproc_def (preproc_arg) @injection.content (#set! injection.language "c"))',
+            c = [[
+              (preproc_def
+                (preproc_arg) @injection.content
+                (#set! nvim.injection-root @injection.content)
+                (#set! injection.language "c"))
+            ]],
           },
         })
         parser:parse(true)
@@ -752,14 +786,15 @@ print()
       local result = exec_lua(function()
         local parser = vim.treesitter.get_parser(0, 'lua', {
           injections = {
-            lua = (
-              '(function_call '
-              .. '(arguments '
-              .. '(string)? @injection.content '
-              .. '(number)? @injection.content '
-              .. '(#offset! @injection.content 0 1 0 -1) '
-              .. '(#set! injection.language "c")))'
-            ),
+            lua = [[
+              (function_call
+                (arguments
+                  (string)? @injection.content
+                  (number)? @injection.content) @_root
+                (#set! nvim.injection-root @injection.content)
+                (#offset! @injection.content 0 1 0 -1)
+                (#set! injection.language "c"))
+            ]],
           },
         })
         parser:parse(true)
@@ -840,51 +875,63 @@ print()
 
   describe('trim! directive', function()
     it('can trim all whitespace', function()
-      -- luacheck: push ignore 611 613
-      insert([=[
-        print([[
-
-                  f
-           helllo
-        there
-        asdf
-        asdfassd   
-
-
-
-        ]])
-        print([[
-              
-              
-              
-        ]])
-
-        print([[]])
-
-        print([[
-        ]])
-
-        print([[     hello 😃    ]])
-      ]=])
-      -- luacheck: pop
-
-      local query_text = [[
-        ; query
-        ((string_content) @str
-          (#trim! @str 1 1 1 1))
-      ]]
+      exec_lua(function()
+        local lines = {
+          '        print([[',
+          '',
+          '            f',
+          '     helllo',
+          '  there',
+          '  asdf',
+          '  asdfassd   ',
+          '',
+          '',
+          '',
+          '  ]])',
+          '  print([[',
+          '        ',
+          '        ',
+          '        ',
+          '  ]])',
+          '',
+          '  print([[]])',
+          '',
+          '  print([[',
+          '  ]])',
+          '',
+          '  print([[     hello 😃    ]])',
+        }
+        vim.api.nvim_buf_set_lines(0, 0, -1, true, lines)
+      end)
 
       exec_lua(function()
         vim.treesitter.start(0, 'lua')
       end)
 
+      local query_text = [[
+        ; query
+        ((string_content) @str)
+      ]]
+      eq({
+        { 'str', { 0, 16, 10, 2 } },
+        { 'str', { 11, 10, 15, 2 } },
+        { 'str', { 17, 10, 17, 10 } },
+        { 'str', { 19, 10, 20, 2 } },
+        { 'str', { 22, 10, 22, 29 } },
+      }, run_query('lua', query_text))
+
+      local trim_query_text = [[
+        ; query
+        ((string_content) @str
+          (#trim! @str 1 1 1 1))
+      ]]
       eq({
         { 'str', { 2, 12, 6, 10 } },
         { 'str', { 11, 10, 11, 10 } },
         { 'str', { 17, 10, 17, 10 } },
         { 'str', { 19, 10, 19, 10 } },
         { 'str', { 22, 15, 22, 25 } },
-      }, run_query('lua', query_text))
+      }, run_query('lua', trim_query_text))
     end)
 
     it('trims only empty lines by default (backwards compatible)', function()
@@ -1034,7 +1081,12 @@ print()
     exec_lua(function()
       _G.parser1 = require('vim.treesitter.languagetree').new(0, 'vimdoc', {
         injections = {
-          vimdoc = '((codeblock (language) @injection.language (code) @injection.content))',
+          vimdoc = [[
+          ((codeblock
+            (language) @injection.language
+            (code) @injection.content) @_root
+            (#set! nvim.injection-root @_root))
+          ]],
         },
       })
       _G.parser1:parse(true)
@@ -1045,7 +1097,13 @@ print()
     exec_lua(function()
       _G.parser2 = require('vim.treesitter.languagetree').new(0, 'vimdoc', {
         injections = {
-          vimdoc = '((codeblock (language) @injection.language (code) @injection.content) (#set! injection.include-children))',
+          vimdoc = [[
+            ((codeblock
+              (language) @injection.language
+              (code) @injection.content) @_root
+              (#set! nvim.injection-root @_root)
+              (#set! injection.include-children))
+          ]],
         },
       })
       _G.parser2:parse(true)
@@ -1089,7 +1147,13 @@ print()
     exec_lua(function()
       _G.parser = require('vim.treesitter.languagetree').new(0, 'vimdoc', {
         injections = {
-          vimdoc = '((codeblock (language) @injection.language (code) @injection.content) (#set! injection.include-children))',
+          vimdoc = [[
+            ((codeblock
+              (language) @injection.language
+              (code) @injection.content) @_root
+              (#set! nvim.injection-root @_root)
+              (#set! injection.include-children))
+          ]],
         },
       })
     end)
@@ -1108,7 +1172,7 @@ print()
       1,
       exec_lua(function()
         _G.parser:parse({ 0, 2 })
-        return #_G.parser:children().lua:trees()
+        return #vim.tbl_keys(_G.parser:children().lua:trees())
       end)
     )
 
@@ -1116,7 +1180,7 @@ print()
       2,
       exec_lua(function()
         _G.parser:parse({ 2, 6 })
-        return #_G.parser:children().lua:trees()
+        return #vim.tbl_keys(_G.parser:children().lua:trees())
       end)
     )
 
@@ -1124,7 +1188,7 @@ print()
       7,
       exec_lua(function()
         _G.parser:parse(true)
-        return #_G.parser:children().lua:trees()
+        return #vim.tbl_keys(_G.parser:children().lua:trees())
       end)
     )
   end)
@@ -1145,7 +1209,13 @@ print()
         vim.treesitter
           .get_parser(0, 'vimdoc', {
             injections = {
-              vimdoc = '((codeblock (language) @injection.language (code) @injection.content) (#set! injection.include-children))',
+              vimdoc = [[
+                ((codeblock
+                  (language) @injection.language
+                  (code) @injection.content) @_root
+                  (#set! nvim.injection-root @_root)
+                  (#set! injection.include-children))
+              ]],
             },
           })
           :parse()
@@ -1254,6 +1324,347 @@ print()
           eq(false, exec_lua('return vim.treesitter.get_parser():is_valid()'))
         end
       )
+    end)
+  end)
+
+  describe('incremental injections', function()
+    local query = [[
+      ((call_expression
+        function: (identifier) @_function
+        arguments: (argument_list
+          .
+          [
+            (string_literal
+              (string_content) @injection.content)
+            (concatenated_string
+              (string_literal
+                (string_content) @injection.content))
+          ])) @_root
+        (#eq? @_function "printf")
+        (#set! nvim.injection-root @_root)
+        (#set! injection.language "lua"))
+
+      ((call_expression
+        function: (identifier) @_function
+        arguments: (argument_list
+          (_)
+          .
+          [
+            (string_literal
+              (string_content) @injection.content)
+            (concatenated_string
+              (string_literal
+                (string_content) @injection.content))
+          ])) @_root
+        (#eq? @_function "fprintf")
+        (#set! nvim.injection-root @_root)
+        (#set! injection.language "lua"))
+    ]]
+
+    local query_not_incremental = [[
+      ((call_expression
+        function: (identifier) @_function
+        arguments: (argument_list
+          .
+          [
+            (string_literal
+              (string_content) @injection.content)
+            (concatenated_string
+              (string_literal
+                (string_content) @injection.content))
+          ])) @_root
+        (#eq? @_function "printf")
+        (#set! injection.language "lua"))
+
+      ((call_expression
+        function: (identifier) @_function
+        arguments: (argument_list
+          (_)
+          .
+          [
+            (string_literal
+              (string_content) @injection.content)
+            (concatenated_string
+              (string_literal
+                (string_content) @injection.content))
+          ])) @_root
+        (#eq? @_function "fprintf")
+        (#set! nvim.injection-root @_root)
+        (#set! injection.language "lua"))
+    ]]
+
+    local query_combined = [[
+      ((call_expression
+        function: (identifier) @_function
+        arguments: (argument_list
+          .
+          [
+            (string_literal
+              (string_content) @injection.content)
+            (concatenated_string
+              (string_literal
+                (string_content) @injection.content))
+          ])) @_root
+        (#eq? @_function "printf")
+        (#set! nvim.injection-root @_root)
+        (#set! injection.combined)
+        (#set! injection.language "lua"))
+
+      ((call_expression
+        function: (identifier) @_function
+        arguments: (argument_list
+          (_)
+          .
+          [
+            (string_literal
+              (string_content) @injection.content)
+            (concatenated_string
+              (string_literal
+                (string_content) @injection.content))
+          ])) @_root
+        (#eq? @_function "fprintf")
+        (#set! nvim.injection-root @_root)
+        (#set! injection.combined)
+        (#set! injection.language "lua"))
+    ]]
+
+    local function get_child_regions()
+      local all_regions = {}
+
+      for lang, child in pairs(_G.parser:children()) do
+        local child_regions = child:included_regions()
+        local result_regions = {}
+
+        for region_i, child_region in pairs(child_regions) do
+          local result_region = {}
+
+          for _, child_range in ipairs(child_region) do
+            table.insert(result_region, {
+              child_range[1],
+              child_range[2],
+              child_range[4],
+              child_range[5],
+            })
+          end
+
+          result_regions[region_i] = result_region
+        end
+
+        all_regions[lang] = result_regions
+      end
+
+      return all_regions
+    end
+
+    it('detects injection query is incremental', function()
+      exec_lua(function()
+        _G.parser = vim.treesitter.get_parser(0, 'c', {
+          injections = { c = query },
+        })
+      end)
+      eq(true, exec_lua('return _G.parser._incremental_injections'))
+    end)
+
+    it('detects injection query is not incremental', function()
+      exec_lua(function()
+        _G.parser = vim.treesitter.get_parser(0, 'c', {
+          injections = { c = query_not_incremental },
+        })
+      end)
+      eq(false, exec_lua('return _G.parser._incremental_injections'))
+    end)
+
+    local function test_same(name, test)
+      it('when used, ' .. name, function()
+        exec_lua(function()
+          _G.parser = vim.treesitter.get_parser(0, 'c', {
+            injections = { c = query },
+          })
+        end)
+        test()
+      end)
+      --[[it('when not used, ' .. name, function()
+        exec_lua(function()
+          _G.parser = vim.treesitter.get_parser(0, 'c', {
+            injections = { c = query_not_incremental },
+          })
+        end)
+        test()
+      end)]]
+    end
+
+    test_same('updates injections correctly', function()
+      exec_lua(function()
+        local lines = {
+          'int main() {',
+          '  printf("local a = 5", "local b = 6");',
+          '  fprintf("local a = 5", "local b = 6");',
+          '  printf("local a = 5" "; local b = 6", "local c = 7" "; local d = 8");',
+          '  fprintf("local a = 5" "; local b = 6", "local c = 7" "; local d = 8");',
+          '}',
+        }
+        vim.api.nvim_buf_set_lines(0, 0, -1, true, lines)
+
+        _G.parser:parse(true)
+      end)
+
+      local lua_regions = {
+        { { 1, 10, 1, 21 } },
+        { { 2, 26, 2, 37 } },
+        { { 3, 10, 3, 21 } },
+        { { 3, 24, 3, 37 } },
+        { { 4, 42, 4, 53 } },
+        { { 4, 56, 4, 69 } },
+      }
+
+      eq({ lua = lua_regions }, exec_lua(get_child_regions))
+
+      -- Switch fprintf to printf. Now the first argument is an injection
+      feed('3gg3|x')
+      feed('5gg0v3lc  p<Esc>')
+      exec_lua('_G.parser:parse(true)')
+
+      lua_regions = {
+        { { 1, 10, 1, 21 } },
+        { { 2, 10, 2, 21 } },
+        { { 3, 10, 3, 21 } },
+        { { 3, 24, 3, 37 } },
+        { { 4, 10, 4, 21 } },
+        { { 4, 24, 4, 37 } },
+      }
+      eq({ lua = lua_regions }, exec_lua(get_child_regions))
+
+      -- Switch printf to fprintf. Now the second argument is an injection
+      feed('2gg3|if<Esc>')
+      feed('4gg0v2lc  fp<Esc>')
+      exec_lua('_G.parser:parse(true)')
+
+      lua_regions = {
+        { { 1, 26, 1, 37 } },
+        { { 2, 10, 2, 21 } },
+        { { 3, 42, 3, 53 } },
+        { { 3, 56, 3, 69 } },
+        { { 4, 10, 4, 21 } },
+        { { 4, 24, 4, 37 } },
+      }
+      eq({ lua = lua_regions }, exec_lua(get_child_regions))
+    end)
+
+    test_same('updates injections when only the text changes', function()
+      exec_lua(function()
+        local lines = {
+          'int main() {',
+          '  printf("local a = 5", "local b = 6");',
+          '}',
+        }
+        vim.api.nvim_buf_set_lines(0, 0, -1, true, lines)
+
+        _G.tree_changed = false
+
+        _G.parser:register_cbs({
+          on_changedtree = function(ranges)
+            _G.tree_changed = ranges
+          end,
+        })
+        _G.parser:parse(true)
+      end)
+
+      local function check_changed()
+        local changed = _G.tree_changed
+        _G.tree_changed = nil
+        return changed
+      end
+
+      eq({ { 0, 0, 0, 2 ^ 32 - 1, 2 ^ 32 - 1, 2 ^ 32 - 1 } }, exec_lua(check_changed))
+      eq({ lua = { { { 1, 10, 1, 21 } } } }, exec_lua(get_child_regions))
+
+      feed('2gg6|x')
+      exec_lua('_G.parser:parse(true)')
+
+      eq({}, exec_lua(check_changed))
+      eq({}, exec_lua(get_child_regions))
+
+      feed('2gg6|in<Esc>')
+      exec_lua('_G.parser:parse(true)')
+
+      eq({}, exec_lua(check_changed))
+      eq({ lua = { { { 1, 10, 1, 21 } } } }, exec_lua(get_child_regions))
+    end)
+
+    it("doesn't match the same node twice across multiple update ranges", function()
+      exec_lua(function()
+        local lines = {
+          'line 0',
+          'line 1: >lua',
+          '  local a = {}',
+          '  local b = {}',
+          '  local c = {}',
+          '<',
+          'line 6',
+        }
+        vim.api.nvim_buf_set_lines(0, 0, -1, true, lines)
+        _G.parser = vim.treesitter.get_parser(0, 'vimdoc', {
+          injections = {
+            vimdoc = [[
+              ((codeblock
+                (language) @injection.language
+                (code) @injection.content) @_root
+                (#set! nvim.injection-root @_root)
+                (#set! injection.include-children))
+            ]],
+          },
+        })
+      end)
+
+      eq({}, exec_lua(get_child_regions))
+
+      exec_lua('_G.parser:parse(true)')
+      local lua_regions = { { { 2, 0, 5, 0 } } }
+      eq({ lua = lua_regions }, exec_lua(get_child_regions))
+
+      feed('3ggx')
+      feed('5ggx')
+
+      -- Parse ranges around the already parsed range
+      exec_lua('_G.parser:parse(true)')
+      lua_regions = { { { 2, 0, 5, 0 } } }
+      eq({ lua = lua_regions }, exec_lua(get_child_regions))
+    end)
+
+    it('parses combined injections', function()
+      exec_lua(function()
+        local lines = {
+          'int main() {',
+          '  printf("local a = 5", "local b = 6");',
+          '  fprintf("local a = 5", "local b = 6");',
+          '  printf("local a = 5", "local b = 6");',
+          '  fprintf("local a = 5", "local b = 6");',
+          '  printf("local a = 5" "; local b = 6", "local c = 7" "; local d = 8");',
+          '}',
+        }
+        vim.api.nvim_buf_set_lines(0, 0, -1, true, lines)
+        _G.parser = vim.treesitter.get_parser(0, 'c', {
+          injections = { c = query_combined },
+        })
+      end)
+
+      eq({}, exec_lua(get_child_regions))
+
+      exec_lua('_G.parser:parse({ 3, 3 })')
+      -- all ranges of a combined injection need to be found.
+      local lua_regions = {
+        {
+          { 1, 10, 1, 21 },
+          { 3, 10, 3, 21 },
+          { 5, 10, 5, 21 },
+          { 5, 24, 5, 37 },
+        },
+        {
+          { 2, 26, 2, 37 },
+          { 4, 26, 4, 37 },
+        },
+      }
+      eq({ lua = lua_regions }, exec_lua(get_child_regions))
     end)
   end)
 end)
