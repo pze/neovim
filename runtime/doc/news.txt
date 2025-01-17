@@ -311,6 +311,8 @@ PERFORMANCE
 • Treesitter injections are searched incrementally (when possible).
   Editing large files with treesitter highlighting is significantly faster.
 • Treesitter folding is now calculated asynchronously.
+• Treesitter injection query iteration is now asynchronous, making edits in
+  large buffers much quicker.
 
 PLUGINS
 

@@ -114,6 +114,10 @@ local TSCallbackNames = {
 ---@field private _valid boolean|table<integer,boolean> If the parsed tree is valid
 ---@field private _logger? fun(logtype: string, msg: string)
 ---@field private _logfile? file*
+---State variables used by _get_injections(), which runs over multiple event loop iterations. Keep
+---track of injection query iterators and injection regions for each tree.
+---@field private _injection_query_iters? table<integer, fun(): integer, table<integer, TSNode[]>, vim.treesitter.query.TSMetadata, TSTree>
+---@field private _unprocessed_injections? table<integer,vim.treesitter.languagetree.Injection>
 local LanguageTree = {}
 
 ---Optional arguments:
@@ -183,6 +187,8 @@ function LanguageTree.new(source, lang, opts, injection)
     _cb_queues = {},
     _callbacks = {},
     _callbacks_rec = {},
+    _injection_query_iters = {},
+    _unprocessed_injections = {},
   }
 
   setmetatable(self, LanguageTree)
@@ -537,11 +543,16 @@ function LanguageTree:_parse_regions(range, timeout)
 end
 
 --- @private
---- @return number
-function LanguageTree:_add_injections()
+--- @param timeout number?
+--- @return number?
+function LanguageTree:_add_injections(timeout)
   local seen_langs = {} ---@type table<string,boolean>
 
-  local query_time, injections_by_lang = tcall(self._get_injections, self)
+  local query_time, injections_by_lang = tcall(self._get_injections, self, timeout)
+  if not injections_by_lang then
+    return nil
+  end
+
   for lang, injection_regions in pairs(injections_by_lang) do
     local has_lang = pcall(language.add, lang)
 
@@ -1240,8 +1251,9 @@ end
 --- TODO: Allow for an offset predicate to tailor the injection range
 ---       instead of using the entire nodes range.
 --- @private
---- @return table<string, Range6[][]>
-function LanguageTree:_get_injections()
+--- @param timeout number?
+--- @return table<string, Range6[][]>?
+function LanguageTree:_get_injections(timeout)
   if not self._injection_query then
     return {}
   end
@@ -1275,6 +1287,10 @@ function LanguageTree:_get_injections()
     end
   end
 
+  -- Clear the function state now that the iterators have been consumed and injections have been
+  -- retrieved.
+  self._injection_query_iters = {}
+  self._unprocessed_injections = {}
   return result
 end
 
@@ -1405,6 +1421,9 @@ function LanguageTree:_edit(
   end
 
   self._parser:reset()
+  -- TODO: Invalidate these incrementally.
+  self._injection_query_iters = {}
+  self._unprocessed_injections = {}
   self._regions = nil
 
   local changed_range = {
