@@ -85,7 +85,7 @@ function M.show_msg(target, content, replace_last)
     end
   end
 
-  local trunc = target == 'cmd' and row + 1 - ext.cmdheight
+  local trunc = target == 'cmd' and row + 1 - ext.cmdheight or 0
   -- Add highlighted message or `dupe_str` to buffer.
   if M.dupe > 0 then
     local str = ('%s(%d)'):format(trunc > 0 and '' or ' ', M.dupe)
