@@ -239,6 +239,12 @@ Some github labels are used to trigger certain jobs:
 * `needs:response` - close PR after a certain amount of time if author doesn't
   respond
 
+### Special comment commands
+
+Some issue comment commands trigger specific build jobs (requires write permission):
+
+* `!build` - trigger a macOS aarch64 (arm64) build for the PR
+
 See also
 --------
 
