@@ -1,0 +1,97 @@
+name: build-macos-aarch64
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  check-permissions:
+    if: |
+      github.event.issue.pull_request &&
+      github.event.comment.body == '!build'
+    runs-on: ubuntu-latest
+    outputs:
+      has-permission: ${{ steps.check.outputs.has-permission }}
+    steps:
+      - name: Check if user has write permission
+        id: check
+        uses: actions/github-script@v8
+        with:
+          result-encoding: string
+          script: |
+            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.actor
+            });
+            const hasPermission = ['admin', 'write'].includes(permission.permission);
+            console.log(`User ${context.actor} has permission: ${permission.permission}`);
+            console.log(`Has required permission: ${hasPermission}`);
+            return hasPermission ? 'true' : 'false';
+      - name: Set output
+        run: echo "has-permission=${{ steps.check.outputs.result }}" >> $GITHUB_OUTPUT
+
+  build-macos-aarch64:
+    needs: check-permissions
+    if: needs.check-permissions.outputs.has-permission == 'true'
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: 11.0
+    steps:
+      - name: Get PR branch
+        id: get-branch
+        uses: actions/github-script@v8
+        with:
+          result-encoding: string
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            return pr.head.ref;
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.get-branch.outputs.result }}
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: ./.github/scripts/install_deps.sh
+
+      - name: Build deps
+        run: |
+          cmake -S cmake.deps -B .deps -G Ninja \
+            -D CMAKE_BUILD_TYPE=RelWithDebInfo \
+            -D CMAKE_FIND_FRAMEWORK=NEVER
+          cmake --build .deps
+
+      - name: Build neovim
+        run: |
+          cmake -B build -G Ninja \
+            -D CMAKE_BUILD_TYPE=RelWithDebInfo \
+            -D ENABLE_LIBINTL=OFF \
+            -D CMAKE_FIND_FRAMEWORK=NEVER
+          cmake --build build
+
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvim-macos-arm64
+          path: build/nvim-macos-arm64.tar.gz
+          retention-days: 7
+
+      - name: Add comment with artifact link
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const runId = context.runId;
+            const artifactUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `✅ macOS aarch64 build completed successfully!\n\nDownload the artifact from: ${artifactUrl}`
+            });
