@@ -3,6 +3,15 @@ on:
   issue_comment:
     types: [created]
 
+concurrency:
+  group: build-macos-aarch64-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   check-permissions:
     if: |
@@ -11,24 +20,60 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has-permission: ${{ steps.check.outputs.has-permission }}
+      pr-head-sha: ${{ steps.get-pr-info.outputs.head-sha }}
+      pr-head-ref: ${{ steps.get-pr-info.outputs.head-ref }}
+      comment-id: ${{ steps.create-comment.outputs.comment-id }}
     steps:
+      - name: Get PR information
+        id: get-pr-info
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `head-sha=${pr.head.sha}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `head-ref=${pr.head.ref}\n`);
+
       - name: Check if user has write permission
         id: check
         uses: actions/github-script@v8
         with:
-          result-encoding: string
           script: |
-            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+            try {
+              const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.actor
+              });
+              const hasPermission = ['admin', 'maintain', 'write'].includes(permission.permission);
+              console.log(`User ${context.actor} has ${permission.permission} access`);
+              console.log(`Has required permission: ${hasPermission}`);
+              const fs = require('fs');
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `has-permission=${hasPermission}\n`);
+            } catch (error) {
+              console.log(`Error checking permissions for ${context.actor}: ${error.message}`);
+              const fs = require('fs');
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `has-permission=false\n`);
+            }
+
+      - name: Create initial status comment
+        id: create-comment
+        if: steps.check.outputs.has-permission == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { data: comment } = await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              username: context.actor
+              issue_number: context.issue.number,
+              body: '🔄 Building Neovim for macOS aarch64 (commit: `${{ steps.get-pr-info.outputs.head-sha }}`)...\n\nPlatform: macOS arm64 (aarch64)\nRetention: 7 days\nTriggered by: ' + context.actor
             });
-            const hasPermission = ['admin', 'write'].includes(permission.permission);
-            console.log(`User ${context.actor} has permission: ${permission.permission}`);
-            console.log(`Has required permission: ${hasPermission}`);
-            return hasPermission ? 'true' : 'false';
-      - name: Set output
-        run: echo "has-permission=${{ steps.check.outputs.result }}" >> $GITHUB_OUTPUT
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `comment-id=${comment.id}\n`);
 
   build-macos-aarch64:
     needs: check-permissions
@@ -37,22 +82,9 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: 11.0
     steps:
-      - name: Get PR branch
-        id: get-branch
-        uses: actions/github-script@v8
-        with:
-          result-encoding: string
-          script: |
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            return pr.head.ref;
-
       - uses: actions/checkout@v5
         with:
-          ref: ${{ steps.get-branch.outputs.result }}
+          ref: ${{ needs.check-permissions.outputs.pr-head-sha }}
           fetch-depth: 0
 
       - name: Install dependencies
@@ -83,15 +115,30 @@ jobs:
           path: build/nvim-macos-arm64.tar.gz
           retention-days: 7
 
-      - name: Add comment with artifact link
+      - name: Update comment on success
+        if: success()
         uses: actions/github-script@v8
         with:
           script: |
             const runId = context.runId;
             const artifactUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
-            await github.rest.issues.createComment({
+            await github.rest.issues.updateComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `✅ macOS aarch64 build completed successfully!\n\nDownload the artifact from: ${artifactUrl}`
+              comment_id: ${{ needs.check-permissions.outputs.comment-id }},
+              body: '✅ macOS aarch64 build completed successfully!\n\nCommit: `${{ needs.check-permissions.outputs.pr-head-sha }}`\nDownload: [Workflow run artifacts](' + artifactUrl + ')\nRetention: 7 days'
+            });
+
+      - name: Update comment on failure
+        if: failure()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const runId = context.runId;
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: ${{ needs.check-permissions.outputs.comment-id }},
+              body: '❌ macOS aarch64 build failed.\n\nCommit: `${{ needs.check-permissions.outputs.pr-head-sha }}`\nLogs: [View workflow run](' + runUrl + ')'
             });
