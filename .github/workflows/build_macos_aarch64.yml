@@ -15,28 +15,12 @@ permissions:
 
 jobs:
   check-permissions:
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '!build'
+    if: github.event_name == 'issue_comment' && trim(github.event.comment.body) == '!build'
     runs-on: ubuntu-latest
     outputs:
       has-permission: ${{ steps.check.outputs.has-permission }}
-      pr-head-sha: ${{ steps.get-pr-info.outputs.head-sha }}
-      pr-head-ref: ${{ steps.get-pr-info.outputs.head-ref }}
       comment-id: ${{ steps.create-comment.outputs.comment-id }}
     steps:
-      - name: Get PR information
-        id: get-pr-info
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            const fs = require('fs');
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `head-sha=${pr.head.sha}\n`);
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `head-ref=${pr.head.ref}\n`);
-
       - name: Check if user has write permission
         id: check
         uses: actions/github-script@v8
@@ -69,7 +53,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '🔄 Building Neovim for macOS aarch64 (commit: `${{ steps.get-pr-info.outputs.head-sha }}`)...\n\nPlatform: macOS arm64 (aarch64)\nRetention: 7 days\nTriggered by: ' + context.actor
+              body: '🔄 Building Neovim for macOS aarch64 (commit: `latest master`)...\n\nPlatform: macOS arm64 (aarch64)\nRetention: 7 days\nTriggered by: ' + context.actor
             });
             const fs = require('fs');
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `comment-id=${comment.id}\n`);
@@ -87,8 +71,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event_name == 'issue_comment' && needs.check-permissions.outputs.pr-head-sha || github.ref }}
+          ref: ${{ github.event_name == 'issue_comment' && 'master' || github.ref }}
           fetch-depth: 0
+
+      - name: Get commit SHA
+        id: get-sha
+        run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
         run: ./.github/scripts/install_deps.sh
@@ -129,7 +117,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               comment_id: ${{ needs.check-permissions.outputs.comment-id }},
-              body: '✅ macOS aarch64 build completed successfully!\n\nCommit: `${{ needs.check-permissions.outputs.pr-head-sha }}`\nDownload: [Workflow run artifacts](' + artifactUrl + ')\nRetention: 7 days'
+              body: '✅ macOS aarch64 build completed successfully!\n\nCommit: `${{ steps.get-sha.outputs.sha }}`\nDownload: [Workflow run artifacts](' + artifactUrl + ')\nRetention: 7 days'
             });
 
       - name: Update comment on failure
@@ -143,5 +131,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               comment_id: ${{ needs.check-permissions.outputs.comment-id }},
-              body: '❌ macOS aarch64 build failed.\n\nCommit: `${{ needs.check-permissions.outputs.pr-head-sha }}`\nLogs: [View workflow run](' + runUrl + ')'
+              body: '❌ macOS aarch64 build failed.\n\nCommit: `${{ steps.get-sha.outputs.sha }}`\nLogs: [View workflow run](' + runUrl + ')'
             });
