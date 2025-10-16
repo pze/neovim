@@ -15,47 +15,52 @@ permissions:
 
 jobs:
   check-permissions:
-    if: github.event_name == 'issue_comment' && trim(github.event.comment.body) == '!build'
+    if: github.event_name == 'issue_comment'
     runs-on: ubuntu-latest
     outputs:
-      has-permission: ${{ steps.check.outputs.has-permission }}
-      comment-id: ${{ steps.create-comment.outputs.comment-id }}
+      should_build: ${{ steps.check.outputs.should_build }}
+      comment-id: ${{ steps.check.outputs.comment-id }}
     steps:
-      - name: Check if user has write permission
+      - name: Check comment and permissions
         id: check
         uses: actions/github-script@v8
         with:
           script: |
+            const commentBody = context.payload.comment.body.trim();
+            if (commentBody !== '!build') {
+              console.log('Comment is not "!build", skipping.');
+              return;
+            }
+
+            let hasPermission = false;
             try {
               const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 username: context.actor
               });
-              const hasPermission = ['admin', 'maintain', 'write'].includes(permission.permission);
+              hasPermission = ['admin', 'maintain', 'write'].includes(permission.permission);
               console.log(`User ${context.actor} has ${permission.permission} access`);
-              console.log(`Has required permission: ${hasPermission}`);
-              const fs = require('fs');
-              fs.appendFileSync(process.env.GITHUB_OUTPUT, `has-permission=${hasPermission}\n`);
             } catch (error) {
               console.log(`Error checking permissions for ${context.actor}: ${error.message}`);
-              const fs = require('fs');
-              fs.appendFileSync(process.env.GITHUB_OUTPUT, `has-permission=false\n`);
             }
 
-      - name: Create initial status comment
-        id: create-comment
-        if: steps.check.outputs.has-permission == 'true'
-        uses: actions/github-script@v8
-        with:
-          script: |
+            if (!hasPermission) {
+              console.log('User does not have permission, skipping.');
+              return;
+            }
+
+            console.log('User has permission. Creating comment and triggering build.');
+
             const { data: comment } = await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: '🔄 Building Neovim for macOS aarch64 (commit: `latest master`)...\n\nPlatform: macOS arm64 (aarch64)\nRetention: 7 days\nTriggered by: ' + context.actor
             });
+
             const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `should_build=true\n`);
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `comment-id=${comment.id}\n`);
 
   build-macos-aarch64:
@@ -63,7 +68,7 @@ jobs:
     if: |
       always() && (
         github.event_name == 'workflow_dispatch' ||
-        (github.event_name == 'issue_comment' && needs.check-permissions.outputs.has-permission == 'true')
+        needs.check-permissions.outputs.should_build == 'true'
       )
     runs-on: macos-14
     env:
