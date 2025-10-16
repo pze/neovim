@@ -2,9 +2,10 @@ name: build-macos-aarch64
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
 
 concurrency:
-  group: build-macos-aarch64-${{ github.event.issue.number }}
+  group: build-macos-aarch64-${{ github.event_name == 'issue_comment' && github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -14,29 +15,15 @@ permissions:
 
 jobs:
   check-permissions:
-    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '!build')
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '!build'
     runs-on: ubuntu-latest
     outputs:
       has-permission: ${{ steps.check.outputs.has-permission }}
       pr-head-sha: ${{ steps.get-pr-info.outputs.head-sha }}
       pr-head-ref: ${{ steps.get-pr-info.outputs.head-ref }}
       comment-id: ${{ steps.create-comment.outputs.comment-id }}
-      is-build-command: ${{ steps.check-command.outputs.is-build-command }}
     steps:
-      - name: Check if comment is exactly !build
-        id: check-command
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const commentBody = context.payload.comment.body.trim();
-            const isBuildCommand = commentBody === '!build';
-            console.log(`Comment body (trimmed): "${commentBody}"`);
-            console.log(`Is build command: ${isBuildCommand}`);
-            const fs = require('fs');
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `is-build-command=${isBuildCommand}\n`);
-
       - name: Get PR information
-        if: steps.check-command.outputs.is-build-command == 'true'
         id: get-pr-info
         uses: actions/github-script@v8
         with:
@@ -51,7 +38,6 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `head-ref=${pr.head.ref}\n`);
 
       - name: Check if user has write permission
-        if: steps.check-command.outputs.is-build-command == 'true'
         id: check
         uses: actions/github-script@v8
         with:
@@ -75,7 +61,7 @@ jobs:
 
       - name: Create initial status comment
         id: create-comment
-        if: steps.check-command.outputs.is-build-command == 'true' && steps.check.outputs.has-permission == 'true'
+        if: steps.check.outputs.has-permission == 'true'
         uses: actions/github-script@v8
         with:
           script: |
@@ -90,14 +76,16 @@ jobs:
 
   build-macos-aarch64:
     needs: check-permissions
-    if: needs.check-permissions.outputs.is-build-command == 'true' && needs.check-permissions.outputs.has-permission == 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' && needs.check-permissions.outputs.has-permission == 'true')
     runs-on: macos-14
     env:
       MACOSX_DEPLOYMENT_TARGET: 11.0
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.check-permissions.outputs.pr-head-sha }}
+          ref: ${{ github.event_name == 'issue_comment' && needs.check-permissions.outputs.pr-head-sha || github.ref }}
           fetch-depth: 0
 
       - name: Install dependencies
@@ -129,7 +117,7 @@ jobs:
           retention-days: 7
 
       - name: Update comment on success
-        if: success()
+        if: success() && github.event_name == 'issue_comment'
         uses: actions/github-script@v8
         with:
           script: |
@@ -143,7 +131,7 @@ jobs:
             });
 
       - name: Update comment on failure
-        if: failure()
+        if: failure() && github.event_name == 'issue_comment'
         uses: actions/github-script@v8
         with:
           script: |
