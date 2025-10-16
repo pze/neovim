@@ -77,8 +77,10 @@ jobs:
   build-macos-aarch64:
     needs: check-permissions
     if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' && needs.check-permissions.outputs.has-permission == 'true')
+      always() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'issue_comment' && needs.check-permissions.outputs.has-permission == 'true')
+      )
     runs-on: macos-14
     env:
       MACOSX_DEPLOYMENT_TARGET: 11.0
