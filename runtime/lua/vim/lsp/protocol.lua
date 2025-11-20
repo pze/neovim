@@ -478,6 +478,7 @@ function protocol.make_client_capabilities()
           preselectSupport = false,
           deprecatedSupport = true,
           documentationFormat = { constants.MarkupKind.Markdown, constants.MarkupKind.PlainText },
+          insertReplaceSupport = true,
           resolveSupport = {
             properties = {
               'additionalTextEdits',
@@ -728,6 +729,8 @@ end
 
 --- LSP Notification (direction: clientToServer)
 --- @alias vim.lsp.protocol.Method.ClientToServer.Notification
+--- | '$/cancelRequest',
+--- | '$/progress',
 --- | '$/setTrace',
 --- | 'exit',
 --- | 'initialized',
@@ -773,7 +776,9 @@ end
 
 --- LSP Notification (direction: serverToClient)
 --- @alias vim.lsp.protocol.Method.ServerToClient.Notification
+--- | '$/cancelRequest',
 --- | '$/logTrace',
+--- | '$/progress',
 --- | 'telemetry/event',
 --- | 'textDocument/publishDiagnostics',
 --- | 'window/logMessage',

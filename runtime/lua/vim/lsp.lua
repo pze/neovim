@@ -56,7 +56,7 @@ function lsp._unsupported_method(method)
   return msg
 end
 
----@param workspace_folders string|lsp.WorkspaceFolder[]|fun(bufnr: integer, on_dir:fun(root_dir?:string))?
+---@param workspace_folders string|lsp.WorkspaceFolder[]?
 ---@return lsp.WorkspaceFolder[]?
 function lsp._get_workspace_folders(workspace_folders)
   if type(workspace_folders) == 'table' then
@@ -68,15 +68,6 @@ function lsp._get_workspace_folders(workspace_folders)
         name = workspace_folders,
       },
     }
-  elseif type(workspace_folders) == 'function' then
-    local name = lsp.client._resolve_root_dir(1000, 0, workspace_folders)
-    return name
-      and {
-        {
-          uri = vim.uri_from_fname(name),
-          name = name,
-        },
-      }
   end
 end
 
@@ -310,9 +301,9 @@ end
 ---     filetypes = { 'c', 'cpp' },
 ---   }
 ---   ```
---- - Get the resolved configuration for "luals":
+--- - Get the resolved configuration for "lua_ls":
 ---   ```lua
----   local cfg = vim.lsp.config.luals
+---   local cfg = vim.lsp.config.lua_ls
 ---   ```
 ---
 ---@since 13
@@ -385,7 +376,6 @@ lsp.config = setmetatable({ _configs = {} }, {
       end
 
       if not rtp_config and not self._configs[name] then
-        log.warn(('%s does not have a configuration'):format(name))
         return
       end
 
@@ -532,7 +522,7 @@ end
 ---
 --- ```lua
 --- vim.lsp.enable('clangd')
---- vim.lsp.enable({'luals', 'pyright'})
+--- vim.lsp.enable({'lua_ls', 'pyright'})
 --- ```
 ---
 --- Example: [lsp-restart]() Passing `false` stops and detaches the client(s). Thus you can
@@ -591,7 +581,7 @@ function lsp.enable(name, enable)
 
   -- Ensure any pre-existing buffers start/stop their LSP clients.
   if enable ~= false then
-    if vim.v.vim_did_enter == 1 then
+    if vim.v.vim_did_enter == 1 and next(lsp._enabled_configs) then
       vim.cmd.doautoall('nvim.lsp.enable FileType')
     end
   else
@@ -1043,9 +1033,15 @@ end
 
 --- Returns list of buffers attached to client_id.
 ---
+---@deprecated
 ---@param client_id integer client id
 ---@return integer[] buffers list of buffer ids
 function lsp.get_buffers_by_client_id(client_id)
+  vim.deprecate(
+    'vim.lsp.get_buffers_by_client_id()',
+    'vim.lsp.get_client_by_id(id).attached_buffers',
+    '0.13'
+  )
   local client = lsp.get_client_by_id(client_id)
   return client and vim.tbl_keys(client.attached_buffers) or {}
 end
@@ -1062,9 +1058,13 @@ end
 --- By default asks the server to shutdown, unless stop was requested
 --- already for this client, then force-shutdown is attempted.
 ---
+---@deprecated
 ---@param client_id integer|integer[]|vim.lsp.Client[] id, list of id's, or list of |vim.lsp.Client| objects
----@param force? boolean shutdown forcefully
+---@param force? boolean|integer Whether to shutdown forcefully.
+--- If `force` is a number, it will be treated as the time in milliseconds to
+--- wait before forcing the shutdown.
 function lsp.stop_client(client_id, force)
+  vim.deprecate('vim.lsp.stop_client()', 'vim.lsp.Client:stop()', '0.13')
   --- @type integer[]|vim.lsp.Client[]
   local ids = type(client_id) == 'table' and client_id or { client_id }
   for _, id in ipairs(ids) do
@@ -1096,7 +1096,7 @@ end
 --- @field name? string
 ---
 --- Only return clients supporting the given method
---- @field method? string
+--- @field method? vim.lsp.protocol.Method.ClientToServer
 ---
 --- Also return uninitialized clients.
 --- @field package _uninitialized? boolean
@@ -1142,46 +1142,9 @@ api.nvim_create_autocmd('VimLeavePre', {
   callback = function()
     local active_clients = lsp.get_clients()
     log.info('exit_handler', active_clients)
-    for _, client in pairs(lsp.client._all) do
-      client:stop()
-    end
 
-    local timeouts = {} --- @type table<integer,integer>
-    local max_timeout = 0
-    local send_kill = false
-
-    for client_id, client in pairs(active_clients) do
-      local timeout = client.flags.exit_timeout
-      if timeout then
-        send_kill = true
-        timeouts[client_id] = timeout
-        max_timeout = math.max(timeout, max_timeout)
-      end
-    end
-
-    local poll_time = 50
-
-    local function check_clients_closed()
-      for client_id, timeout in pairs(timeouts) do
-        timeouts[client_id] = timeout - poll_time
-      end
-
-      for client_id, _ in pairs(active_clients) do
-        if timeouts[client_id] ~= nil and timeouts[client_id] > 0 then
-          return false
-        end
-      end
-      return true
-    end
-
-    if send_kill then
-      if not vim.wait(max_timeout, check_clients_closed, poll_time) then
-        for client_id, client in pairs(active_clients) do
-          if timeouts[client_id] ~= nil then
-            client:stop(true)
-          end
-        end
-      end
+    for _, client in pairs(active_clients) do
+      client:stop(client.flags.exit_timeout)
     end
   end,
 })

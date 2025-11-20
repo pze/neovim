@@ -178,7 +178,7 @@ local options = {
         - Disable the use of 'keymap' (without changing its value).
         Note that 'arabicshape' and 'delcombine' are not reset (it is a global
         option).
-        Also see |arabic.txt|.
+        Also see |l10n-arabic.txt|.
       ]=],
       full_name = 'arabic',
       redraw = { 'curswant' },
@@ -201,7 +201,7 @@ local options = {
         When disabled the display shows each character's true stand-alone
         form.
         Arabic is a complex language which requires other settings, for
-        further details see |arabic.txt|.
+        further details see |l10n-arabic.txt|.
       ]=],
       full_name = 'arabicshape',
       redraw = { 'all_windows', 'ui_option' },
@@ -6726,9 +6726,9 @@ local options = {
       defaults = { if_true = '' },
       values = { '', 'double', 'single', 'shadow', 'rounded', 'solid', 'bold', 'none' },
       desc = [=[
-        Defines the default border style of popupmenu windows. Same as
-        'winborder'. |hl-PmenuBorder| is used. When style is "shadow", the
-        |hl-PmenuShadow| and |hl-PmenuShadowThrough| are used.
+        Defines the default border style of popupmenu windows. See 'winborder' for
+        valid values. |hl-PmenuBorder| is used for highlighting the border, and when
+        style is "shadow" the |hl-PmenuShadow| and |hl-PmenuShadowThrough| groups are used.
       ]=],
       short_desc = N_('border of popupmenu'),
       type = 'string',
@@ -8547,7 +8547,7 @@ local options = {
         encoding is used, Vim doesn't check it.
         How the related spell files are found is explained here: |spell-load|.
 
-        If the |spellfile.vim| plugin is active and you use a language name
+        If the |spellfile.lua| plugin is active and you use a language name
         for which Vim cannot find the .spl file in 'runtimepath' the plugin
         will ask you if you want to download the file.
 
@@ -9499,7 +9499,7 @@ local options = {
         'arabic' is set and the value of 'arabicshape' will be ignored.
         Note that setting 'termbidi' has the immediate effect that
         'arabicshape' is ignored, but 'rightleft' isn't changed automatically.
-        For further details see |arabic.txt|.
+        For further details see |l10n-arabic.txt|.
       ]=],
       full_name = 'termbidi',
       scope = { 'global' },

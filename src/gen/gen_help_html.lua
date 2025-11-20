@@ -15,6 +15,8 @@
 -- USAGE (VALIDATE):
 --   1. nvim -V1 -es +"lua require('src.gen.gen_help_html').validate('./runtime/doc')" +q
 --      - validate() is 10x faster than gen(), so it is used in CI.
+--   2. Check for unreachable URLs:
+--      nvim -V1 -es +"lua require('src.gen.gen_help_html').validate('./runtime/doc', true)" +q
 --
 -- SELF-TEST MODE:
 --   1. nvim -V1 -es +"lua require('src.gen.gen_help_html')._test()" +q
@@ -28,6 +30,7 @@
 --   * visit_validate() is the core function used by validate().
 --   * Files in `new_layout` will be generated with a "flow" layout instead of preformatted/fixed-width layout.
 
+local pending_urls = 0
 local tagmap = nil ---@type table<string, string>
 local helpfiles = nil ---@type string[]
 local invalid_links = {} ---@type table<string, any>
@@ -62,12 +65,14 @@ local new_layout = {
   ['lsp.txt'] = true,
   ['channel.txt'] = true,
   ['deprecated.txt'] = true,
-  ['develop.txt'] = true,
+  ['dev.txt'] = true,
+  ['dev_arch.txt'] = true,
   ['dev_style.txt'] = true,
+  ['dev_test.txt'] = true,
   ['dev_theme.txt'] = true,
   ['dev_tools.txt'] = true,
   ['dev_vimpatch.txt'] = true,
-  ['editorconfig.txt'] = true,
+  ['help.txt'] = true,
   ['faq.txt'] = true,
   ['gui.txt'] = true,
   ['intro.txt'] = true,
@@ -79,6 +84,7 @@ local new_layout = {
   ['news-0.9.txt'] = true,
   ['news-0.10.txt'] = true,
   ['news-0.11.txt'] = true,
+  ['news-0.12.txt'] = true,
   ['nvim.txt'] = true,
   ['pack.txt'] = true,
   ['provider.txt'] = true,
@@ -87,13 +93,15 @@ local new_layout = {
   ['vim_diff.txt'] = true,
 }
 
--- Map of new:old pages, to redirect renamed pages.
+-- Map of new-page:old-page, to redirect renamed pages.
 local redirects = {
-  ['api-ui-events'] = 'ui',
-  ['credits'] = 'backers',
-  ['plugins'] = 'editorconfig',
-  ['terminal'] = 'nvim_terminal_emulator',
-  ['tui'] = 'term',
+  ['api-ui-events.txt'] = 'ui.txt',
+  ['credits.txt'] = 'backers.txt',
+  ['dev.txt'] = 'develop.txt',
+  ['dev_tools.txt'] = 'debug.txt',
+  ['plugins.txt'] = 'editorconfig.txt',
+  ['terminal.txt'] = 'nvim_terminal_emulator.txt',
+  ['tui.txt'] = 'term.txt',
 }
 
 -- TODO: These known invalid |links| require an update to the relevant docs.
@@ -378,15 +386,26 @@ local function validate_link(node, bufnr, fname)
   return helppage, tagname, ignored
 end
 
---- TODO: port the logic from scripts/check_urls.vim
-local function validate_url(text, fname)
-  local ignored = false
-  if ignore_errors[vim.fs.basename(fname)] then
-    ignored = true
-  elseif text:find('http%:') and not exclude_invalid_urls[text] then
-    invalid_urls[text] = vim.fs.basename(fname)
+local function validate_url(text, fname, check_unreachable)
+  fname = vim.fs.basename(fname)
+  local ignored = ignore_errors[fname] or exclude_invalid_urls[text]
+  if ignored then
+    return true
   end
-  return ignored
+  if check_unreachable then
+    vim.net.request(text, { retry = 2 }, function(err, _)
+      if err then
+        invalid_urls[text] = fname
+      end
+      pending_urls = pending_urls - 1
+    end)
+    pending_urls = pending_urls + 1
+  else
+    if text:find('http%:') then
+      invalid_urls[text] = fname
+    end
+  end
+  return false
 end
 
 --- Traverses the tree at `root` and checks that |tag| links point to valid helptags.
@@ -444,7 +463,7 @@ local function visit_validate(root, level, lang_tree, opt, stats)
     end
   elseif node_name == 'url' then
     local fixed_url, _ = fix_url(trim(text))
-    validate_url(fixed_url, opt.fname)
+    validate_url(fixed_url, opt.fname, opt.request_urls)
   elseif node_name == 'taglink' or node_name == 'optionlink' then
     local _, _, _ = validate_link(root, opt.buf, opt.fname)
   end
@@ -736,7 +755,7 @@ local function get_helpfiles(dir, include)
 end
 
 --- Populates the helptags map.
-local function get_helptags(help_dir)
+local function _get_helptags(help_dir)
   local m = {}
   -- Load a random help file to convince taglist() to do its job.
   vim.cmd(string.format('split %s/api.txt', help_dir))
@@ -747,6 +766,18 @@ local function get_helptags(help_dir)
     end
   end
   vim.cmd('q!')
+
+  return m
+end
+
+--- Populates the helptags map.
+local function get_helptags(help_dir)
+  local m = _get_helptags(help_dir)
+
+  --- XXX: Append tags from netrw, until we remove it...
+  local netrwtags = _get_helptags(vim.fs.normalize('$VIMRUNTIME/pack/dist/opt/netrw/doc/'))
+  m = vim.tbl_extend('keep', m, netrwtags)
+
   return m
 end
 
@@ -794,14 +825,19 @@ end
 ---
 --- @param fname string help file to validate
 --- @param parser_path string? path to non-default vimdoc.so
+--- @param request_urls boolean? whether to make requests to the URLs
 --- @return { invalid_links: number, parse_errors: string[] }
-local function validate_one(fname, parser_path)
+local function validate_one(fname, parser_path, request_urls)
   local stats = {
     parse_errors = {},
   }
   local lang_tree, buf = parse_buf(fname, nil, parser_path)
   for _, tree in ipairs(lang_tree:trees()) do
-    visit_validate(tree:root(), 0, tree, { buf = buf, fname = fname }, stats)
+    visit_validate(tree:root(), 0, tree, {
+      buf = buf,
+      fname = fname,
+      request_urls = request_urls,
+    }, stats)
   end
   lang_tree:destroy()
   vim.cmd.close()
@@ -1283,10 +1319,11 @@ local function ok(cond, expected, actual, message)
         vim.inspect(actual)
       )
     )
-    return cond
   else
-    return assert(cond)
+    assert(cond)
   end
+
+  return true
 end
 local function eq(expected, actual, message)
   return ok(vim.deep_equal(expected, actual), expected, actual, message)
@@ -1393,29 +1430,27 @@ function M.gen(help_dir, to_dir, include, commit, parser_path)
     )
 
     -- Generate redirect pages for renamed help files.
-    local helpfile_tag = (helpfile:gsub('%.txt$', ''))
-    local redirect_from = redirects[helpfile_tag]
+    local helpfile_tag = (helpfile:gsub('%.txt$', '')):gsub('_', '-') -- "dev_tools.txt" => "dev-tools"
+    local redirect_from = redirects[helpfile]
     if redirect_from then
-      local redirect_text = ([[
-*%s*      Nvim
+      local redirect_text = vim.text
+        .indent(
+          0,
+          [[
+          *%s*      Nvim
 
-This document moved to: |%s|
+          Document moved to: |%s|
 
-==============================================================================
-This document moved to: |%s|
+          ==============================================================================
+          Document moved
 
-This document moved to: |%s|
+          Document moved to: |%s|
 
-==============================================================================
- vim:tw=78:ts=8:ft=help:norl:
-      ]]):format(
-        redirect_from,
-        helpfile_tag,
-        helpfile_tag,
-        helpfile_tag,
-        helpfile_tag,
-        helpfile_tag
-      )
+          ==============================================================================
+           vim:tw=78:ts=8:ft=help:norl:
+          ]]
+        )
+        :format(redirect_from, helpfile_tag, helpfile_tag, helpfile_tag, helpfile_tag, helpfile_tag)
       local redirect_to = ('%s/%s'):format(to_dir, get_helppage(redirect_from))
       local redirect_html, _ =
         gen_one(redirect_from, redirect_text, redirect_to, false, commit or '?', parser_path)
@@ -1439,8 +1474,9 @@ This document moved to: |%s|
 
   print(('\ngenerated %d html pages'):format(#helpfiles + redirects_count))
   print(('total errors: %d'):format(err_count))
+  -- Why aren't the netrw tags found in neovim/docs/ CI?
   print(('invalid tags: %s'):format(vim.inspect(invalid_links)))
-  assert(#(include or {}) > 0 or redirects_count == vim.tbl_count(redirects)) -- sanity check
+  eq(redirects_count, include and redirects_count or vim.tbl_count(redirects)) -- sanity check
   print(('redirects: %d'):format(redirects_count))
   print('\n')
 
@@ -1467,7 +1503,7 @@ end
 --- This is 10x faster than gen(), for use in CI.
 ---
 --- @return nvim.gen_help_html.validate_result result
-function M.validate(help_dir, include, parser_path)
+function M.validate(help_dir, include, parser_path, request_urls)
   vim.validate('help_dir', help_dir, function(d)
     return vim.fn.isdirectory(vim.fs.normalize(d)) == 1
   end, 'valid directory')
@@ -1479,15 +1515,12 @@ function M.validate(help_dir, include, parser_path)
   local files_to_errors = {} ---@type table<string, string[]>
   ensure_runtimepath()
   tagmap = get_helptags(vim.fs.normalize(help_dir))
-  --- XXX: Append tags from netrw, until we remove it...
-  local netrwtags = get_helptags(vim.fs.normalize('$VIMRUNTIME/pack/dist/opt/netrw/doc/'))
-  tagmap = vim.tbl_extend('keep', tagmap, netrwtags)
   helpfiles = get_helpfiles(help_dir, include)
   parser_path = parser_path and vim.fs.normalize(parser_path) or nil
 
   for _, f in ipairs(helpfiles) do
     local helpfile = vim.fs.basename(f)
-    local rv = validate_one(f, parser_path)
+    local rv = validate_one(f, parser_path, request_urls)
     print(('validated (%-4s errors): %s'):format(#rv.parse_errors, helpfile))
     if #rv.parse_errors > 0 then
       files_to_errors[helpfile] = rv.parse_errors
@@ -1497,6 +1530,13 @@ function M.validate(help_dir, include, parser_path)
     end
     err_count = err_count + #rv.parse_errors
   end
+
+  -- Requests are async, wait for them to finish.
+  -- TODO(yochem): `:cancel()` tasks after #36146
+  vim.wait(20000, function()
+    return pending_urls <= 0
+  end)
+  ok(pending_urls <= 0, 'pending url checks', pending_urls)
 
   ---@type nvim.gen_help_html.validate_result
   return {
@@ -1517,11 +1557,12 @@ end
 --- 3. File a parser bug, and adjust the tolerance of this test in the meantime.
 ---
 --- @param help_dir? string e.g. '$VIMRUNTIME/doc' or './runtime/doc'
-function M.run_validate(help_dir)
+--- @param request_urls? boolean make network requests to check if the URLs are reachable.
+function M.run_validate(help_dir, request_urls)
   help_dir = vim.fs.normalize(help_dir or '$VIMRUNTIME/doc')
   print('doc path = ' .. vim.uv.fs_realpath(help_dir))
 
-  local rv = M.validate(help_dir)
+  local rv = M.validate(help_dir, nil, nil, request_urls)
 
   -- Check that we actually found helpfiles.
   ok(rv.helpfiles > 100, '>100 :help files', rv.helpfiles)

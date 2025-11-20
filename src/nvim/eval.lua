@@ -1420,10 +1420,8 @@ M.funcs = {
       Returns a |Dictionary| with information about Insert mode
       completion.  See |ins-completion|.
       The items are:
-         mode		Current completion mode name string.
-      		See |complete_info_mode| for the values.
-         pum_visible	|TRUE| if popup menu is visible.
-      		See |pumvisible()|.
+         completed	Return a dictionary containing the entries of
+      		the currently selected index item.
          items	List of all completion candidates.  Each item
       		is a dictionary containing the entries "word",
       		"abbr", "menu", "kind", "info" and
@@ -1434,13 +1432,18 @@ M.funcs = {
       		and "items" are in "what", the returned list
       		will still be named "items", but each item
       		will have an additional "match" field.
+         mode		Current completion mode name string.
+      		See |complete_info_mode| for the values.
+         preinserted_text
+      		The actual text that is pre-inserted, see
+      		|preinserted()|.
+         pum_visible	|TRUE| if popup menu is visible.
+      		See |pumvisible()|.
          selected	Selected item index.  First index is zero.
       		Index is -1 if no item is selected (showing
       		typed text only, or the last completion after
       		no item is selected when using the <Up> or
       		<Down> keys)
-         completed	Return a dictionary containing the entries of
-      		the currently selected index item.
          preview_winid     Info floating preview window id.
          preview_bufnr     Info floating preview buffer id.
 
@@ -4032,16 +4035,19 @@ M.funcs = {
       With no arguments, returns the name of the effective
       |current-directory|. With {winnr} or {tabnr} the working
       directory of that scope is returned, and 'autochdir' is
-      ignored.
-      Tabs and windows are identified by their respective numbers,
-      0 means current tab or window. Missing tab number implies 0.
-      Thus the following are equivalent: >vim
+      ignored. Tabs and windows are identified by their respective
+      numbers, 0 means current tab or window. Missing tab number
+      implies 0. Thus the following are equivalent: >vim
       	getcwd(0)
       	getcwd(0, 0)
       <If {winnr} is -1 it is ignored, only the tab is resolved.
       {winnr} can be the window number or the |window-ID|.
       If both {winnr} and {tabnr} are -1 the global working
       directory is returned.
+      Note: When {tabnr} is -1 Vim returns an empty string to
+      signal that it is invalid, whereas Nvim returns either the
+      global working directory if {winnr} is -1 or the working
+      directory of the window indicated by {winnr}.
       Throw error if the arguments are invalid. |E5000| |E5001| |E5002|
 
     ]=],
@@ -4404,33 +4410,30 @@ M.funcs = {
     args = 1,
     base = 1,
     desc = [=[
-      Get the position for String {expr}.
-      The accepted values for {expr} are:
-          .	    The cursor position.
-          $	    The last line in the current buffer.
+      Gets a position, where {expr} is one of:
+          .	    Cursor position.
+          $	    Last line in the current buffer.
           'x	    Position of mark x (if the mark is not set, 0 is
       	    returned for all values).
           w0	    First line visible in current window (one if the
       	    display isn't updated, e.g. in silent Ex mode).
           w$	    Last line visible in current window (this is one
       	    less than "w0" if no lines are visible).
-          v	    When not in Visual mode, returns the cursor
-      	    position.  In Visual mode, returns the other end
-      	    of the Visual area.  A good way to think about
-      	    this is that in Visual mode "v" and "." complement
-      	    each other.  While "." refers to the cursor
-      	    position, "v" refers to where |v_o| would move the
-      	    cursor.  As a result, you can use "v" and "."
-      	    together to work on all of a selection in
-      	    characterwise Visual mode.  If the cursor is at
-      	    the end of a characterwise Visual area, "v" refers
-      	    to the start of the same Visual area.  And if the
-      	    cursor is at the start of a characterwise Visual
-      	    area, "v" refers to the end of the same Visual
-      	    area.  "v" differs from |'<| and |'>| in that it's
-      	    updated right away.
-      Note that a mark in another file can be used.  The line number
-      then applies to another buffer.
+          v	    End of the current Visual selection (unlike |'<|
+      	    |'>| which give the previous, not current, Visual
+      	    selection), or the cursor position if not in Visual
+      	    mode.
+
+      	    To get the current selected region: >vim
+      	      let region = getregionpos(getpos('v'), getpos('.'))
+      <
+      	    Explanation: in Visual mode "v" and "." complement each
+      	    other.  While "." refers to the cursor position, "v"
+      	    refers to where |v_o| would move the cursor.  So you can
+      	    use "v" and "." together to get the selected region.
+
+      Note that if a mark in another file is used, the line number
+      applies to that buffer.
 
       The result is a |List| with four numbers:
           [bufnum, lnum, col, off]
@@ -4740,8 +4743,14 @@ M.funcs = {
       the offset of the character's first cell not included in the
       selection, otherwise all its cells are included.
 
-      Apart from the options supported by |getregion()|, {opts} also
-      supports the following:
+      To get the current visual selection: >vim
+        let region = getregionpos(getpos('v'), getpos('.'))
+      <
+      The {opts} Dict supports the following items:
+
+      	type		See |getregion()|.
+
+      	exclusive	See |getregion()|.
 
       	eol		If |TRUE|, indicate positions beyond
       			the end of a line with "col" values
@@ -12209,7 +12218,7 @@ M.funcs = {
   synconcealed = {
     args = 2,
     desc = [=[
-      The result is a |List| with currently three items:
+      The result is a |List| with three items:
       1. The first item in the list is 0 if the character at the
          position {lnum} and {col} is not part of a concealable
          region, 1 if it is.  {lnum} is used like with |getline()|.

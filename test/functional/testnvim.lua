@@ -1014,10 +1014,15 @@ function M.add_builddir_to_rtp()
 end
 
 --- Create folder with non existing parents
+---
+--- TODO(justinmk): lift this and `t.mkdir()` into vim.fs.
+---
 --- @param path string
 --- @return boolean?
 function M.mkdir_p(path)
-  return os.execute((is_os('win') and 'mkdir ' .. path or 'mkdir -p ' .. path))
+  return os.execute(
+    (is_os('win') and 'mkdir ' .. string.gsub(path, '/', '\\') or 'mkdir -p ' .. path)
+  )
 end
 
 local testid = (function()

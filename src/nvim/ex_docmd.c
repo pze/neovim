@@ -35,6 +35,7 @@
 #include "nvim/drawscreen.h"
 #include "nvim/edit.h"
 #include "nvim/errors.h"
+#include "nvim/eval/fs.h"
 #include "nvim/eval/typval.h"
 #include "nvim/eval/typval_defs.h"
 #include "nvim/eval/userfunc.h"
@@ -4904,11 +4905,22 @@ static void ex_restart(exarg_T *eap)
     });
     set_vim_var_list(VV_ARGV, argv_cpy);
   }
-  char *quit_cmd = (eap->do_ecmd_cmd) ? eap->do_ecmd_cmd : "qall!";
-  Error err = ERROR_INIT;
-  if ((cmdmod.cmod_flags & CMOD_CONFIRM) && check_changed_any(false, false)) {
+
+  bool confirm = (p_confirm || (cmdmod.cmod_flags & CMOD_CONFIRM));
+  if (confirm && check_changed_any(false, false)) {
     return;
   }
+
+  char *quit_cmd;
+  if (eap->do_ecmd_cmd) {
+    quit_cmd = eap->do_ecmd_cmd;
+  } else if (confirm) {
+    quit_cmd = "qall";
+  } else {
+    quit_cmd = "qall!";
+  }
+
+  Error err = ERROR_INIT;
   restarting = true;
   nvim_command(cstr_as_string(quit_cmd), &err);
   if (ERROR_SET(&err)) {

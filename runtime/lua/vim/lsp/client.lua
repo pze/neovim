@@ -34,9 +34,9 @@ local all_clients = {}
 
 --- @class vim.lsp.ClientConfig
 ---
---- Callback invoked before the LSP "initialize" phase, where `params` contains the parameters
---- being sent to the server and `config` is the config that was passed to |vim.lsp.start()|.
---- You can use this to modify parameters before they are sent.
+--- Callback which can modify parameters before they are sent to the server. Invoked before LSP
+--- "initialize" phase (after `cmd` is invoked), where `params` is the parameters being sent to the
+--- server and `config` is the config passed to |vim.lsp.start()|.
 --- @field before_init? fun(params: lsp.InitializeParams, config: vim.lsp.ClientConfig)
 ---
 --- Map overriding the default capabilities defined by |vim.lsp.protocol.make_client_capabilities()|,
@@ -117,7 +117,7 @@ local all_clients = {}
 --- @field on_init? elem_or_list<fun(client: vim.lsp.Client, init_result: lsp.InitializeResult)>
 ---
 --- Directory where the LSP server will base its workspaceFolders, rootUri, and rootPath on initialization.
---- @field root_dir? string|fun(bufnr: integer, on_dir:fun(root_dir?:string))
+--- @field root_dir? string
 ---
 --- Map of language server-specific settings, decided by the client. Sent to the LS if requested via
 --- `workspace/configuration`. Keys are case-sensitive.
@@ -190,7 +190,7 @@ local all_clients = {}
 --- @field requests table<integer,{ type: string, bufnr: integer, method: string}?>
 ---
 --- See [vim.lsp.ClientConfig].
---- @field root_dir? string|fun(bufnr: integer, on_dir:fun(root_dir?:string))
+--- @field root_dir string?
 ---
 --- RPC client object, for low level interaction with the client.
 --- See |vim.lsp.rpc.start()|.
@@ -649,7 +649,7 @@ end
 --- Returns the handler associated with an LSP method.
 --- Returns the default handler if the user hasn't set a custom one.
 ---
---- @param method (string) LSP method name
+--- @param method (vim.lsp.protocol.Method) LSP method name
 --- @return lsp.Handler? handler for the given method, if defined, or the default from |vim.lsp.handlers|
 function Client:_resolve_handler(method)
   return self.handlers[method] or lsp.handlers[method]
@@ -659,7 +659,7 @@ end
 --- @param id integer
 --- @param req_type 'pending'|'complete'|'cancel'
 --- @param bufnr? integer (only required for req_type='pending')
---- @param method? string (only required for req_type='pending')
+--- @param method? vim.lsp.protocol.Method (only required for req_type='pending')
 function Client:_process_request(id, req_type, bufnr, method)
   local pending = req_type == 'pending'
 
@@ -865,8 +865,20 @@ end
 --- you request to stop a client which has previously been requested to
 --- shutdown, it will automatically escalate and force shutdown.
 ---
---- @param force? boolean
+--- If `force` is a number, it will be treated as the time in milliseconds to
+--- wait before forcing the shutdown.
+---
+--- Note: Forcing shutdown while a server is busy writing out project or index
+--- files can lead to file corruption.
+---
+--- @param force? boolean|integer
 function Client:stop(force)
+  if type(force) == 'number' then
+    vim.defer_fn(function()
+      self:stop(true)
+    end, force)
+  end
+
   local rpc = self.rpc
   if rpc.is_closing() then
     return
@@ -876,7 +888,7 @@ function Client:stop(force)
 
   lsp._watchfiles.cancel(self.id)
 
-  if force or not self.initialized or self._graceful_shutdown_failed then
+  if force == true or not self.initialized or self._graceful_shutdown_failed then
     rpc.terminate()
     return
   end
@@ -886,7 +898,7 @@ function Client:stop(force)
     if err == nil then
       rpc.notify('exit')
     else
-      -- If there was an error in the shutdown request, then term to be safe.
+      -- If there was an error in the shutdown request, then terminate to be safe.
       rpc.terminate()
       self._graceful_shutdown_failed = true
     end
@@ -1365,27 +1377,6 @@ function Client:_remove_workspace_folder(dir)
       break
     end
   end
-end
-
---- Gets root_dir, waiting up to `ms` for a potentially async `root_dir()` result.
----
---- @param ms integer
---- @param buf integer
---- @return string|nil
-function Client._resolve_root_dir(ms, buf, root_dir)
-  if root_dir == nil or type(root_dir) == 'string' then
-    return root_dir --[[@type string|nil]]
-  end
-
-  local dir = nil --[[@type string|nil]]
-  root_dir(buf, function(d)
-    dir = d
-  end)
-  -- root_dir() may be async, wait for a result.
-  vim.wait(ms, function()
-    return not not dir
-  end)
-  return dir
 end
 
 -- Export for internal use only.

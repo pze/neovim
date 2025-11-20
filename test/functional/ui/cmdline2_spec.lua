@@ -1,5 +1,6 @@
 -- Tests for (protocol-driven) ui2, intended to replace the legacy message grid UI.
 
+local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
@@ -95,6 +96,68 @@ describe('cmdline2', function()
                                                            |
       {1:~                                                    }|*12
       ^                                                     |
+    ]])
+  end)
+
+  it('highlights after deleting buffer', function()
+    feed(':%bw!<CR>:call foo()')
+    screen:expect([[
+                                                           |
+      {1:~                                                    }|*12
+      {16::}{15:call} {25:foo}{16:()}^                                          |
+    ]])
+  end)
+
+  it('can change cmdline buffer during textlock', function()
+    exec([[
+      func Foo(a, b)
+        redrawstatus!
+      endfunc
+      set wildoptions=pum findfunc=Foo wildmode=noselect:lastused,full
+      au CmdlineChanged * call wildtrigger()
+    ]])
+    feed(':find ')
+    screen:expect([[
+                                                           |
+      {1:~                                                    }|*12
+      {16::}{15:find} ^                                               |
+    ]])
+    t.eq(n.eval('v:errmsg'), "E1514: 'findfunc' did not return a List type")
+  end)
+end)
+
+describe('cmdline2', function()
+  it('resizing during startup shows confirm prompt #36439', function()
+    clear({
+      args = {
+        '--clean',
+        '+lua require("vim._extui").enable({})',
+        "+call feedkeys(':')",
+      },
+    })
+    local screen = Screen.new()
+    feed('call confirm("Ok?")<CR>')
+    screen:try_resize(screen._width + 1, screen._height)
+    screen:expect([[
+                                                            |
+      {1:~                                                     }|*8
+      {3:                                                      }|
+                                                            |
+      {6:Ok?}                                                   |
+                                                            |
+      {6:[O]k: }^                                                |
+    ]])
+    -- And resizing the next event loop iteration also works.
+    feed('k')
+    screen:try_resize(screen._width, screen._height + 1)
+    screen:expect([[
+                                                            |
+      {1:~                                                     }|*9
+      {3:                                                      }|
+                                                            |
+      {6:Ok?}                                                   |
+                                                            |
+      {6:[O]k: }^                                                |
     ]])
   end)
 end)
