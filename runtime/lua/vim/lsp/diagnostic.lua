@@ -222,8 +222,7 @@ end
 --- @param client_id? integer
 --- @param diagnostics lsp.Diagnostic[]
 --- @param is_pull boolean
---- @param version integer?
-local function handle_diagnostics(uri, client_id, diagnostics, is_pull, version)
+local function handle_diagnostics(uri, client_id, diagnostics, is_pull)
   local fname = vim.uri_to_fname(uri)
 
   if #diagnostics == 0 and vim.fn.bufexists(fname) == 0 then
@@ -232,10 +231,6 @@ local function handle_diagnostics(uri, client_id, diagnostics, is_pull, version)
 
   local bufnr = vim.fn.bufadd(fname)
   if not bufnr then
-    return
-  end
-
-  if version and util.buf_versions[bufnr] ~= version then
     return
   end
 
@@ -254,7 +249,7 @@ end
 ---@param params lsp.PublishDiagnosticsParams
 ---@param ctx lsp.HandlerContext
 function M.on_publish_diagnostics(_, params, ctx)
-  handle_diagnostics(params.uri, ctx.client_id, params.diagnostics, false, params.version)
+  handle_diagnostics(params.uri, ctx.client_id, params.diagnostics, false)
 end
 
 --- |lsp-handler| for the method "textDocument/diagnostic"
@@ -358,7 +353,7 @@ end
 ---@param bufnr integer buffer number
 ---@param client_id? integer Client ID to refresh (default: all clients)
 ---@param only_visible? boolean Whether to only refresh for the visible regions of the buffer (default: false)
-local function refresh(bufnr, client_id, only_visible)
+function M._refresh(bufnr, client_id, only_visible)
   if
     only_visible
     and vim.iter(api.nvim_list_wins()):all(function(window)
@@ -388,6 +383,33 @@ local function refresh(bufnr, client_id, only_visible)
   end
 end
 
+--- |lsp-handler| for the method `workspace/diagnostic/refresh`
+---@param ctx lsp.HandlerContext
+---@private
+function M.on_refresh(err, _, ctx)
+  if err then
+    return vim.NIL
+  end
+  local client = vim.lsp.get_client_by_id(ctx.client_id)
+  if client == nil then
+    return vim.NIL
+  end
+  if
+    client.server_capabilities.diagnosticProvider
+    and client.server_capabilities.diagnosticProvider.workspaceDiagnostics
+  then
+    M._workspace_diagnostics({ client_id = ctx.client_id })
+  else
+    for bufnr in pairs(client.attached_buffers or {}) do
+      if bufstates[bufnr] and bufstates[bufnr].pull_kind == 'document' then
+        M._refresh(bufnr)
+      end
+    end
+  end
+
+  return vim.NIL
+end
+
 --- Enable pull diagnostics for a buffer
 ---@param bufnr (integer) Buffer handle, or 0 for current
 function M._enable(bufnr)
@@ -415,7 +437,7 @@ function M._enable(bufnr)
       end
       if bufstates[bufnr] and bufstates[bufnr].pull_kind == 'document' then
         local client_id = opts.data.client_id --- @type integer?
-        refresh(bufnr, client_id, true)
+        M._refresh(bufnr, client_id, true)
       end
     end,
     group = augroup,
@@ -424,7 +446,7 @@ function M._enable(bufnr)
   api.nvim_buf_attach(bufnr, false, {
     on_reload = function()
       if bufstates[bufnr] and bufstates[bufnr].pull_kind == 'document' then
-        refresh(bufnr)
+        M._refresh(bufnr)
       end
     end,
     on_detach = function()
@@ -512,7 +534,7 @@ function M._workspace_diagnostics(opts)
   for _, client in ipairs(clients) do
     --- @type lsp.WorkspaceDiagnosticParams
     local params = {
-      identifier = vim.tbl_get(client, 'server_capabilities, diagnosticProvider', 'identifier'),
+      identifier = vim.tbl_get(client, 'server_capabilities', 'diagnosticProvider', 'identifier'),
       previousResultIds = previous_result_ids(client.id),
     }
 

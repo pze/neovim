@@ -41,6 +41,7 @@
 #include "nvim/ugrid.h"
 #include "nvim/ui_client.h"
 #include "nvim/ui_defs.h"
+#include "nvim/vim_defs.h"
 
 #ifdef MSWIN
 # include "nvim/os/os_win_console.h"
@@ -220,7 +221,10 @@ void tui_handle_term_mode(TUIData *tui, TermMode mode, TermModeState state)
   case kTermModePermanentlyReset:
     // TODO(bfredl): This is really ILOG but we want it in all builds.
     // add to show_verbose_terminfo() without being too racy ????
-    WLOG("TUI: terminal mode %d unavailable, state %d", mode, state);
+    if (!nvim_testing) {
+      // Very noisy in CI, don't log during tests. #33599
+      WLOG("TUI: terminal mode %d unavailable, state %d", mode, state);
+    }
     // If the mode is not recognized, or if the terminal emulator does not allow it to be changed,
     // then there is nothing to do
     break;
@@ -230,7 +234,10 @@ void tui_handle_term_mode(TUIData *tui, TermMode mode, TermModeState state)
     FALLTHROUGH;
   case kTermModeReset:
     // The terminal supports changing the given mode
-    WLOG("TUI: terminal mode %d detected, state %d", mode, state);
+    if (!nvim_testing) {
+      // Very noisy in CI, don't log during tests. #33599
+      WLOG("TUI: terminal mode %d detected, state %d", mode, state);
+    }
     switch (mode) {
     case kTermModeSynchronizedOutput:
       // Ref: https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

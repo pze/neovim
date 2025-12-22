@@ -515,22 +515,17 @@ local function lsp_enable_callback(bufnr)
   end
 end
 
---- Auto-starts LSP when a buffer is opened, based on the |lsp-config| `filetypes`, `root_markers`,
---- and `root_dir` fields.
+--- Auto-activates LSP in each buffer based on the |lsp-config| `filetypes`, `root_markers`, and
+--- `root_dir`.
+---
+--- To disable, pass `enable=false`: Stops related clients and servers (force-stops servers after
+--- a timeout, unless `exit_timeout=false`).
 ---
 --- Examples:
 ---
 --- ```lua
 --- vim.lsp.enable('clangd')
 --- vim.lsp.enable({'lua_ls', 'pyright'})
---- ```
----
---- Example: [lsp-restart]() Passing `false` stops and detaches the client(s). Thus you can
---- "restart" LSP by disabling and re-enabling a given config:
----
---- ```lua
---- vim.lsp.enable('clangd', false)
---- vim.lsp.enable('clangd', true)
 --- ```
 ---
 --- Example: To _dynamically_ decide whether LSP is activated, define a |lsp-root_dir()| function
@@ -549,9 +544,9 @@ end
 ---@since 13
 ---
 --- @param name string|string[] Name(s) of client(s) to enable.
---- @param enable? boolean `true|nil` to enable, `false` to disable (actively stops and detaches
---- clients as needed, and force stops them if necessary after `client.flags.exit_timeout`
---- milliseconds, with a default time of 3000 milliseconds)
+--- @param enable? boolean If `true|nil`, enables auto-activation of the given LSP config on current
+--- and future buffers. If `false`, disables auto-activation and stops related LSP clients and
+--- servers (force-stops servers after `exit_timeout` milliseconds).
 function lsp.enable(name, enable)
   validate('name', name, { 'string', 'table' })
 
@@ -588,9 +583,7 @@ function lsp.enable(name, enable)
   else
     for _, nm in ipairs(names) do
       for _, client in ipairs(lsp.get_clients({ name = nm })) do
-        local t = client.flags.exit_timeout
-        local force_timeout = t and tonumber(t) or (t ~= false and 3000 or nil)
-        client:stop(force_timeout)
+        client:stop(client.exit_timeout)
       end
     end
   end
@@ -1058,8 +1051,8 @@ end
 --- vim.lsp.stop_client(vim.lsp.get_clients())
 --- ```
 ---
---- By default asks the server to shutdown, unless stop was requested
---- already for this client, then force-shutdown is attempted.
+--- By default asks the server to shutdown, unless stop was requested already for this client (then
+--- force-shutdown is attempted, unless `exit_timeout=false`).
 ---
 ---@deprecated
 ---@param client_id integer|integer[]|vim.lsp.Client[] id, list of id's, or list of |vim.lsp.Client| objects
@@ -1147,7 +1140,7 @@ api.nvim_create_autocmd('VimLeavePre', {
     log.info('exit_handler', active_clients)
 
     for _, client in pairs(active_clients) do
-      client:stop(client.flags.exit_timeout)
+      client:stop(client.exit_timeout)
     end
   end,
 })

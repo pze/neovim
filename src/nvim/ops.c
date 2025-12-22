@@ -692,6 +692,10 @@ static void block_insert(oparg_T *oap, const char *s, size_t slen, bool b_insert
       // the insert in the first line.
       curbuf->b_op_end.lnum = oap->end.lnum;
       curbuf->b_op_end.col = offset;
+      if (curbuf->b_visual.vi_end.coladd) {
+        curbuf->b_visual.vi_end.col += curbuf->b_visual.vi_end.coladd;
+        curbuf->b_visual.vi_end.coladd = 0;
+      }
     }
   }   // for all lnum
 
@@ -1042,11 +1046,20 @@ static void mb_adjust_opend(oparg_T *oap)
   }
 }
 
-/// Put character 'c' at position 'lp'
-static inline void pbyte(pos_T lp, int c)
+/// put byte 'c' at position 'lp', but
+/// verify, that the position to place
+/// is actually safe
+static void pbyte(pos_T lp, int c)
 {
   assert(c <= UCHAR_MAX);
-  *(ml_get_buf_mut(curbuf, lp.lnum) + lp.col) = (char)c;
+  char *p = ml_get_buf_mut(curbuf, lp.lnum);
+  colnr_T len = curbuf->b_ml.ml_line_len;
+
+  // safety check
+  if (lp.col >= len) {
+    lp.col = (len > 1 ? len - 2 : 0);
+  }
+  *(p + lp.col) = (char)c;
   if (!curbuf_splice_pending) {
     extmark_splice_cols(curbuf, (int)lp.lnum - 1, lp.col, 1, 1, kExtmarkUndo);
   }
@@ -1861,7 +1874,7 @@ char *skip_comment(char *line, bool process, bool include_space, bool *is_commen
   return line;
 }
 
-/// @param count              number of lines (minimal 2) to join at cursor position.
+/// @param count              number of lines (minimal 2) to join at the cursor position.
 /// @param save_undo          when true, save lines for undo first.
 /// @param use_formatoptions  set to false when e.g. processing backspace and comment
 ///                           leaders should not be removed.
