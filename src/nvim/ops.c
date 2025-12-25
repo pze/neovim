@@ -1053,7 +1053,7 @@ static void pbyte(pos_T lp, int c)
 {
   assert(c <= UCHAR_MAX);
   char *p = ml_get_buf_mut(curbuf, lp.lnum);
-  colnr_T len = curbuf->b_ml.ml_line_len;
+  colnr_T len = curbuf->b_ml.ml_line_textlen;
 
   // safety check
   if (lp.col >= len) {
@@ -2077,7 +2077,7 @@ theend:
 
 /// Reset 'linebreak' and take care of side effects.
 /// @return  the previous value, to be passed to restore_lbr().
-static bool reset_lbr(void)
+bool reset_lbr(void)
 {
   if (!curwin->w_p_lbr) {
     return false;
@@ -2089,7 +2089,7 @@ static bool reset_lbr(void)
 }
 
 /// Restore 'linebreak' and take care of side effects.
-static void restore_lbr(bool lbr_saved)
+void restore_lbr(bool lbr_saved)
 {
   if (curwin->w_p_lbr || !lbr_saved) {
     return;

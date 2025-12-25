@@ -1488,9 +1488,6 @@ static char *find_excmd_after_range(exarg_T *eap)
   // Save location after command modifiers.
   char *cmd = eap->cmd;
   eap->cmd = skip_range(eap->cmd, NULL);
-  if (*eap->cmd == '*') {
-    eap->cmd = skipwhite(eap->cmd + 1);
-  }
   char *p = find_ex_command(eap, NULL);
   eap->cmd = cmd;  // Restore original position for address parsing
   return p;
@@ -3421,6 +3418,11 @@ char *skip_range(const char *cmd, int *ctx)
 
   // Skip ":" and white space.
   cmd = skip_colon_white(cmd, false);
+
+  // Skip "*" used for Visual range.
+  if (*cmd == '*') {
+    cmd = skipwhite(cmd + 1);
+  }
 
   return (char *)cmd;
 }
@@ -8058,7 +8060,7 @@ static void ex_lsp(exarg_T *eap)
 
   NLUA_EXEC_STATIC("require'vim._core.ex_cmd.lsp'.ex_lsp(...)", args, kRetNilBool, NULL, &err);
   if (ERROR_SET(&err)) {
-    emsg(err.msg);
+    emsg_multiline(err.msg, "lua_error", HLF_E, true);
   }
   api_clear_error(&err);
 }
