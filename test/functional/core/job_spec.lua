@@ -105,7 +105,7 @@ describe('jobs', function()
           vim.v.progpath,
           '--clean',
           '--headless',
-          '+lua print(vim.uv.new_tty(1, false):get_winsize())',
+          '+lua tty = vim.uv.new_tty(1, false) print(tty:get_winsize()) tty:close()',
         }, {
           term = true,
           width = 11,
@@ -286,7 +286,9 @@ describe('jobs', function()
   end)
 
   it('error on non-executable `cwd`', function()
-    skip(is_os('win'), 'Not applicable for Windows')
+    if is_os('win') then
+      return -- Not applicable for Windows.
+    end
 
     local dir = 'Xtest_not_executable_dir'
     mkdir(dir)
@@ -732,6 +734,50 @@ describe('jobs', function()
         { 'notification', '1', { 'foo', 'bar', { '', '' }, 'stdout' } },
       }
     )
+  end)
+
+  it('lists passed to callbacks are freed if not stored #25891', function()
+    if not exec_lua('return pcall(require, "ffi")') then
+      pending('missing LuaJIT FFI')
+    end
+
+    source([[
+      let g:stdout = ''
+      func AppendStrOnEvent(id, data, event)
+        let g:stdout ..= join(a:data, "\n")
+      endfunc
+      let g:job_opts = {'on_stdout': function('AppendStrOnEvent')}
+    ]])
+    local job = eval([[jobstart(['cat', '-'], g:job_opts)]])
+
+    exec_lua(function()
+      local ffi = require('ffi')
+      ffi.cdef([[
+        typedef struct listvar_S list_T;
+        list_T *gc_first_list;
+        list_T *tv_list_alloc(ptrdiff_t len);
+        void tv_list_free(list_T *const l);
+      ]])
+      _G.L = ffi.C.tv_list_alloc(1)
+      _G.L_val = ffi.cast('uintptr_t', _G.L)
+      assert(ffi.cast('uintptr_t', ffi.C.gc_first_list) == _G.L_val)
+    end)
+
+    local str_all = ''
+    for _, str in ipairs({ 'LINE1\nLINE2\nLINE3\n', 'LINE4\n', 'LINE5\nLINE6\n' }) do
+      str_all = str_all .. str
+      api.nvim_chan_send(job, str)
+      retry(nil, 1000, function()
+        eq(str_all, api.nvim_get_var('stdout'))
+      end)
+    end
+
+    exec_lua(function()
+      local ffi = require('ffi')
+      assert(ffi.cast('uintptr_t', ffi.C.gc_first_list) == _G.L_val)
+      ffi.C.tv_list_free(_G.L)
+      assert(ffi.cast('uintptr_t', ffi.C.gc_first_list) ~= _G.L_val)
+    end)
   end)
 
   it('jobstart() environment: $NVIM, $NVIM_LISTEN_ADDRESS #11009', function()
@@ -1294,6 +1340,31 @@ describe('jobs', function()
         {5:-- TERMINAL --}                                    |
       ]])
     end
+  end)
+
+  it('uses real pipes for stdin/stdout #35984', function()
+    if is_os('win') then
+      return -- Not applicable for Windows.
+    end
+
+    -- this fails on linux if we used socketpair() for stdin and stdout,
+    -- which libuv does if you ask to create stdio streams for you
+    local val = exec_lua(function()
+      local output
+      local job = vim.fn.jobstart('wc /dev/stdin > /dev/stdout', {
+        stdout_buffered = true,
+        on_stdout = function(_, data, _)
+          output = data
+        end,
+      })
+      vim.fn.chansend(job, 'foo\nbar baz\n')
+      vim.fn.chanclose(job, 'stdin')
+      vim.fn.jobwait({ job })
+      return output
+    end)
+    eq(2, #val, val)
+    eq({ '2', '3', '12', '/dev/stdin' }, vim.split(val[1], '%s+', { trimempty = true }))
+    eq('', val[2])
   end)
 end)
 

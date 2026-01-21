@@ -103,7 +103,7 @@ static int linematch_lines = 40;
 
 #define LBUFLEN 50               // length of line in diff file
 
-// Max file size xdiff is eqipped to deal with. The value (1GB - 1MB) comes
+// Max file size xdiff is equipped to deal with. The value (1GB - 1MB) comes
 // from Git's implementation.
 #define MAX_XDIFF_SIZE (1024L * 1024 * 1023)
 
@@ -234,7 +234,7 @@ void diff_buf_add(buf_T *buf)
     }
   }
 
-  semsg(_("E96: Cannot diff more than %" PRId64 " buffers"), (int64_t)DB_COUNT);
+  semsg(_("E96: Cannot diff more than %d buffers"), DB_COUNT);
 }
 
 /// Remove all buffers to make diffs for.
@@ -853,6 +853,14 @@ static int diff_write(buf_T *buf, diffin_T *din, linenr_T start, linenr_T end)
 {
   if (din->din_fname == NULL) {
     return diff_write_buffer(buf, &din->din_mmfile, start, end);
+  }
+
+  // Writing the diff buffers may trigger changes in the window structure
+  // via aucmd_prepbuf()/aucmd_restbuf() commands.
+  // This may cause recursively calling winframe_remove() which is not safe and causes
+  // use after free, so let's stop it here.
+  if (frames_locked()) {
+    return FAIL;
   }
 
   if (end < 0) {
@@ -2535,7 +2543,7 @@ void diff_set_topline(win_T *fromwin, win_T *towin)
   }
 
   // When w_topline changes need to recompute w_botline and cursor position
-  invalidate_botline(towin);
+  invalidate_botline_win(towin);
   changed_line_abv_curs_win(towin);
 
   check_topfill(towin, false);

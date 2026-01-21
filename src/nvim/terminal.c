@@ -202,6 +202,7 @@ struct terminal {
   StringBuilder selection;  ///< Growable array containing full selection data
 
   StringBuilder termrequest_buffer;  ///< Growable array containing unfinished request sequence
+  VTermTerminator termrequest_terminator;  ///< Terminator (BEL or ST) used in the termrequest
 
   size_t refcount;                  // reference count
 };
@@ -227,22 +228,29 @@ static Set(ptr_t) invalidated_terminals = SET_INIT;
 
 static void emit_termrequest(void **argv)
 {
-  Terminal *term = argv[0];
+  handle_T buf_handle = (handle_T)(intptr_t)argv[0];
   char *sequence = argv[1];
   size_t sequence_length = (size_t)argv[2];
   StringBuilder *pending_send = argv[3];
   int row = (int)(intptr_t)argv[4];
   int col = (int)(intptr_t)argv[5];
   size_t sb_deleted = (size_t)(intptr_t)argv[6];
+  VTermTerminator terminator = (VTermTerminator)(intptr_t)argv[7];
+
+  buf_T *buf = handle_get_buffer(buf_handle);
+  if (!buf || buf->terminal == NULL) {  // Terminal already closed.
+    xfree(sequence);
+    return;
+  }
+  Terminal *term = buf->terminal;
 
   if (term->sb_pending > 0) {
     // Don't emit the event while there is pending scrollback because we need
     // the buffer contents to be fully updated. If this is the case, schedule
     // the event onto the pending queue where it will be executed after the
     // terminal is refreshed and the pending scrollback is cleared.
-    multiqueue_put(term->pending.events, emit_termrequest, term, sequence, (void *)sequence_length,
-                   pending_send, (void *)(intptr_t)row, (void *)(intptr_t)col,
-                   (void *)(intptr_t)sb_deleted);
+    multiqueue_put(term->pending.events, emit_termrequest, argv[0], argv[1], argv[2],
+                   argv[3], argv[4], argv[5], argv[6], argv[7]);
     return;
   }
 
@@ -252,12 +260,14 @@ static void emit_termrequest(void **argv)
   ADD_C(cursor, INTEGER_OBJ(row - (int64_t)(term->sb_deleted - sb_deleted)));
   ADD_C(cursor, INTEGER_OBJ(col));
 
-  MAXSIZE_TEMP_DICT(data, 2);
+  MAXSIZE_TEMP_DICT(data, 3);
   String termrequest = { .data = sequence, .size = sequence_length };
   PUT_C(data, "sequence", STRING_OBJ(termrequest));
   PUT_C(data, "cursor", ARRAY_OBJ(cursor));
+  PUT_C(data, "terminator",
+        terminator ==
+        VTERM_TERMINATOR_BEL ? STATIC_CSTR_AS_OBJ("\x07") : STATIC_CSTR_AS_OBJ("\x1b\\"));
 
-  buf_T *buf = handle_get_buffer(term->buf_handle);
   apply_autocmds_group(EVENT_TERMREQUEST, NULL, NULL, true, AUGROUP_ALL, buf, NULL,
                        &DICT_OBJ(data));
   xfree(sequence);
@@ -280,11 +290,12 @@ static void schedule_termrequest(Terminal *term)
   kv_init(*term->pending.send);
 
   int line = row_to_linenr(term, term->cursor.row);
-  multiqueue_put(main_loop.events, emit_termrequest, term,
+  multiqueue_put(main_loop.events, emit_termrequest, (void *)(intptr_t)term->buf_handle,
                  xmemdup(term->termrequest_buffer.items, term->termrequest_buffer.size),
                  (void *)(intptr_t)term->termrequest_buffer.size, term->pending.send,
                  (void *)(intptr_t)line, (void *)(intptr_t)term->cursor.col,
-                 (void *)(intptr_t)term->sb_deleted);
+                 (void *)(intptr_t)term->sb_deleted,
+                 (void *)(intptr_t)term->termrequest_terminator);
 }
 
 static int parse_osc8(const char *str, int *attr)
@@ -336,6 +347,7 @@ static int on_osc(int command, VTermStringFragment frag, void *user)
   }
   kv_concat_len(term->termrequest_buffer, frag.str, frag.len);
   if (frag.final) {
+    term->termrequest_terminator = frag.terminator;
     if (has_event(EVENT_TERMREQUEST)) {
       schedule_termrequest(term);
     }
@@ -366,10 +378,11 @@ static int on_dcs(const char *command, size_t commandlen, VTermStringFragment fr
 
   if (frag.initial) {
     kv_size(term->termrequest_buffer) = 0;
-    kv_printf(term->termrequest_buffer, "\x1bP%*s", (int)commandlen, command);
+    kv_printf(term->termrequest_buffer, "\x1bP%.*s", (int)commandlen, command);
   }
   kv_concat_len(term->termrequest_buffer, frag.str, frag.len);
   if (frag.final) {
+    term->termrequest_terminator = frag.terminator;
     schedule_termrequest(term);
   }
   return 1;
@@ -392,6 +405,7 @@ static int on_apc(VTermStringFragment frag, void *user)
   }
   kv_concat_len(term->termrequest_buffer, frag.str, frag.len);
   if (frag.final) {
+    term->termrequest_terminator = frag.terminator;
     schedule_termrequest(term);
   }
   return 1;
@@ -575,7 +589,7 @@ void terminal_close(Terminal **termpp, int status)
 
 #ifdef EXITFREE
   if (entered_free_all_mem) {
-    // If called from close_buffer() inside free_all_mem(), the main loop has
+    // If called from buf_close_terminal() inside free_all_mem(), the main loop has
     // already been freed, so it is not safe to call the close callback here.
     terminal_destroy(termpp);
     return;
@@ -585,7 +599,7 @@ void terminal_close(Terminal **termpp, int status)
   bool only_destroy = false;
 
   if (term->closed) {
-    // If called from close_buffer() after the process has already exited, we
+    // If called from buf_close_terminal() after the process has already exited, we
     // only need to call the close callback to clean up the terminal object.
     only_destroy = true;
   } else {
@@ -602,9 +616,9 @@ void terminal_close(Terminal **termpp, int status)
   buf_T *buf = handle_get_buffer(term->buf_handle);
 
   if (status == -1 || exiting) {
-    // If this was called by close_buffer() (status is -1), or if exiting, we
-    // must inform the buffer the terminal no longer exists so that
-    // close_buffer() won't call this again.
+    // If this was called by buf_close_terminal() (status is -1), or if exiting, we
+    // must inform the buffer the terminal no longer exists so that buf_freeall()
+    // won't call buf_close_terminal() again.
     // If inside Terminal mode event handling, setting buf_handle to 0 also
     // informs terminal_enter() to call the close callback before returning.
     term->buf_handle = 0;
@@ -723,29 +737,50 @@ static void unset_terminal_winopts(TerminalState *const s)
 
   win_T *const wp = handle_get_window(s->save_curwin_handle);
   if (!wp) {
-    free_string_option(s->save_w_p_culopt);
-    s->save_curwin_handle = 0;
-    return;
+    goto end;
   }
 
-  if (win_valid(wp)) {  // No need to redraw if window not in curtab.
-    if (s->save_w_p_cuc != wp->w_p_cuc) {
-      redraw_later(wp, UPD_SOME_VALID);
-    } else if (s->save_w_p_cul != wp->w_p_cul
-               || (s->save_w_p_cul && s->save_w_p_culopt_flags != wp->w_p_culopt_flags)) {
-      redraw_later(wp, UPD_VALID);
+  winopt_T *winopts = NULL;
+  if (wp->w_buffer->handle != s->term->buf_handle) {  // Buffer no longer in "wp".
+    buf_T *buf = handle_get_buffer(s->term->buf_handle);
+    if (buf == NULL) {
+      goto end;  // Nothing to restore as the buffer was deleted.
     }
+    for (size_t i = 0; i < kv_size(buf->b_wininfo); i++) {
+      WinInfo *wip = kv_A(buf->b_wininfo, i);
+      if (wip->wi_win == wp && wip->wi_optset) {
+        winopts = &wip->wi_opt;
+        break;
+      }
+    }
+    if (winopts == NULL) {
+      goto end;  // Nothing to restore as there is no matching WinInfo.
+    }
+  } else {
+    winopts = &wp->w_onebuf_opt;
+    if (win_valid(wp)) {  // No need to redraw if window not in curtab.
+      if (s->save_w_p_cuc != wp->w_p_cuc) {
+        redraw_later(wp, UPD_SOME_VALID);
+      } else if (s->save_w_p_cul != wp->w_p_cul
+                 || (s->save_w_p_cul && s->save_w_p_culopt_flags != wp->w_p_culopt_flags)) {
+        redraw_later(wp, UPD_VALID);
+      }
+    }
+    wp->w_p_culopt_flags = s->save_w_p_culopt_flags;
   }
 
-  wp->w_p_cul = s->save_w_p_cul;
   if (s->save_w_p_culopt) {
-    free_string_option(wp->w_p_culopt);
-    wp->w_p_culopt = s->save_w_p_culopt;
+    free_string_option(winopts->wo_culopt);
+    winopts->wo_culopt = s->save_w_p_culopt;
+    s->save_w_p_culopt = NULL;
   }
-  wp->w_p_culopt_flags = s->save_w_p_culopt_flags;
-  wp->w_p_cuc = s->save_w_p_cuc;
-  wp->w_p_so = s->save_w_p_so;
-  wp->w_p_siso = s->save_w_p_siso;
+  winopts->wo_cul = s->save_w_p_cul;
+  winopts->wo_cuc = s->save_w_p_cuc;
+  winopts->wo_so = s->save_w_p_so;
+  winopts->wo_siso = s->save_w_p_siso;
+
+end:
+  free_string_option(s->save_w_p_culopt);
   s->save_curwin_handle = 0;
 }
 
@@ -865,8 +900,13 @@ static bool terminal_check_focus(TerminalState *const s)
     set_terminal_winopts(s);
   }
   if (s->term != curbuf->terminal) {
-    // Active terminal buffer changed, flush terminal's cursor state to the UI.
+    // Active terminal changed, flush terminal's cursor state to the UI.
     terminal_focus(s->term, false);
+    if (s->close) {
+      s->term->destroy = true;
+      s->term->opts.close_cb(s->term->opts.data);
+      s->close = false;
+    }
 
     s->term = curbuf->terminal;
     s->term->pending.cursor = true;
@@ -884,6 +924,9 @@ static bool terminal_check_focus(TerminalState *const s)
 static int terminal_check(VimState *state)
 {
   TerminalState *const s = (TerminalState *)state;
+
+  // Shouldn't reach here when pressing a key to close the terminal buffer.
+  assert(!s->close || (s->term->buf_handle == 0 && s->term != curbuf->terminal));
 
   if (stop_insert_mode || !terminal_check_focus(s)) {
     return 0;
@@ -904,7 +947,6 @@ static int terminal_check(VimState *state)
   s->term->refcount--;
   if (s->term->buf_handle == 0) {
     s->close = true;
-    return 0;
   }
 
   // Autocommands above may have changed focus, scrolled, or moved the cursor.
@@ -977,7 +1019,6 @@ static int terminal_execute(VimState *state, int key)
     s->term->refcount--;
     if (s->term->buf_handle == 0) {
       s->close = true;
-      return 0;
     }
     break;
 
@@ -1055,6 +1096,7 @@ void terminal_destroy(Terminal **termpp)
     kv_destroy(term->selection);
     kv_destroy(term->termrequest_buffer);
     vterm_free(term->vt);
+    xfree(term->pending.send);
     multiqueue_free(term->pending.events);
     xfree(term);
     *termpp = NULL;  // coverity[dead-store]
@@ -1337,8 +1379,11 @@ static int term_movecursor(VTermPos new_pos, VTermPos old_pos, int visible, void
 }
 
 static void buf_set_term_title(buf_T *buf, const char *title, size_t len)
-  FUNC_ATTR_NONNULL_ALL
 {
+  if (!buf) {
+    return;  // In case of receiving OSC 2 between buffer close and job exit.
+  }
+
   Error err = ERROR_INIT;
   dict_set_var(buf->b_vars,
                STATIC_CSTR_AS_STRING("term_title"),
@@ -1365,7 +1410,7 @@ static int term_settermprop(VTermProp prop, VTermValue *val, void *data)
     break;
 
   case VTERM_PROP_TITLE: {
-    buf_T *buf = handle_get_buffer(term->buf_handle);
+    buf_T *buf = handle_get_buffer(term->buf_handle);  // May be NULL
     VTermStringFragment frag = val->string;
 
     if (frag.initial && frag.final) {
@@ -2093,12 +2138,8 @@ static void invalidate_terminal(Terminal *term, int start_row, int end_row)
 static void refresh_terminal(Terminal *term)
 {
   buf_T *buf = handle_get_buffer(term->buf_handle);
-  bool valid = true;
-  if (!buf || !(valid = buf_valid(buf))) {
-    // Destroyed by `close_buffer`. Do not do anything else.
-    if (!valid) {
-      term->buf_handle = 0;
-    }
+  if (!buf) {
+    // Destroyed by `buf_freeall()`. Do not do anything else.
     return;
   }
   linenr_T ml_before = buf->b_ml.ml_line_count;

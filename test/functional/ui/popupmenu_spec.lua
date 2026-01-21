@@ -1063,9 +1063,10 @@ describe('builtin popupmenu', function()
         [111] = { background = Screen.colors.Plum1, foreground = Screen.colors.DarkBlue },
         [112] = { background = Screen.colors.Plum1, foreground = Screen.colors.DarkGreen },
         [113] = { background = Screen.colors.Yellow, foreground = Screen.colors.Black },
-        [114] = { background = Screen.colors.Grey0, blend = 100 },
-        [115] = { background = Screen.colors.Grey0, blend = 80 },
-        [116] = { blend = 100, background = Screen.colors.NvimLightGrey4 },
+        [114] = { background = Screen.colors.Black, blend = 100 },
+        [115] = { background = Screen.colors.Black, blend = 80 },
+        [116] = { foreground = Screen.colors.Black },
+        [117] = { background = Screen.colors.Grey80, foreground = Screen.colors.Black },
         -- popup non-selected item
         n = { background = Screen.colors.Plum1 },
         -- popup scrollbar knob
@@ -2237,6 +2238,53 @@ describe('builtin popupmenu', function()
       it('popup info window reuses bufnr', function()
         feed('S<C-x><C-o><C-N>')
         eq(1, n.eval([[len(uniq(copy(g:bufnrs))) == 1]]))
+      end)
+
+      it('handles tabs in info width calculation', function()
+        screen:try_resize(50, 11)
+        command([[
+          set cot+=menuone
+          let g:list = [#{word: 'class', info: "\tClassName() = default;"}]
+        ]])
+        feed('S<C-x><C-o>')
+        local info = fn.complete_info()
+        eq(30, api.nvim_win_get_width(info.preview_winid))
+        feed('<ESC>')
+        exec([[
+          setlocal tabstop=1
+          autocmd ModeChanged *:i ++once call complete(1, [#{word: 'a'}])
+                \| call nvim__complete_set(0, #{info: "\tfloob\tfloob"})
+        ]])
+        feed('i')
+        info = fn.complete_info()
+        eq(21, api.nvim_win_get_width(info.preview_winid))
+        if not multigrid then
+          screen:expect([[
+            a^s                                                |
+            {12:a              }{n:        floob   floob}{1:              }|
+            {1:~                                                 }|*8
+            {5:-- INSERT --}                                      |
+          ]])
+        end
+      end)
+
+      it('hide info window when insufficient space', function()
+        screen:try_resize(12, 11)
+        feed('S<C-x><C-o>')
+        local info = fn.complete_info()
+        eq(true, api.nvim_win_get_config(info.preview_winid).hide)
+      end)
+
+      it('enables wrap to avoid info text truncation', function()
+        screen:try_resize(50, 11)
+        command([[
+          set nowrap
+          set cot+=menuone
+          let g:list = [#{word: 'class', info: repeat('+', 60)}]
+        ]])
+        feed('S<C-x><C-o>')
+        local info = fn.complete_info()
+        eq(2, api.nvim_win_get_config(info.preview_winid).height)
       end)
     end)
 
@@ -9186,7 +9234,8 @@ describe('builtin popupmenu', function()
       end)
       it("'pumborder' with shadow", function()
         command('set pumborder=shadow')
-        feed('S<C-x><C-o>')
+        insert('line1\nline2line2line2line2\nline3\nline4line4line4\nline5line5')
+        feed('ggO<C-x><C-o>')
         if multigrid then
           screen:expect({
             grid = [[
@@ -9195,16 +9244,21 @@ describe('builtin popupmenu', function()
               [3:------------------------------]|
             ## grid 2
               one^                           |
-              {1:~                             }|*9
+              line1                         |
+              line2line2line2line2          |
+              line3                         |
+              line4line4line4               |
+              line5line5                    |
+              {1:~                             }|*4
             ## grid 3
               {5:-- }{6:match 1 of 3}               |
             ## grid 4
               {n:1info}|
             ## grid 5
               {12:one            }{114: }|
-              {n:two            }{116: }|
-              {n:three          }{116: }|
-              {114: }{116:               }|
+              {n:two            }{115: }|
+              {n:three          }{115: }|
+              {114: }{115:               }|
             ]],
             win_pos = {
               [2] = {
@@ -9219,51 +9273,67 @@ describe('builtin popupmenu', function()
               [5] = { -1, 'NW', 2, 1, 0, false, 100, 2, 1, 0 },
               [4] = { 1001, 'NW', 1, 1, 16, false, 50, 1, 1, 16 },
             },
-            win_viewport = {
-              [2] = {
-                win = 1000,
-                topline = 0,
-                botline = 2,
-                curline = 0,
-                curcol = 3,
-                linecount = 1,
-                sum_scroll_delta = 0,
-              },
-              [4] = {
-                win = 1001,
-                topline = 0,
-                botline = 1,
-                curline = 0,
-                curcol = 0,
-                linecount = 1,
-                sum_scroll_delta = 0,
-              },
-            },
-            win_viewport_margins = {
-              [2] = {
-                bottom = 0,
-                left = 0,
-                right = 0,
-                top = 0,
-                win = 1000,
-              },
-              [4] = {
-                bottom = 0,
-                left = 0,
-                right = 0,
-                top = 0,
-                win = 1001,
-              },
-            },
           })
         else
           screen:expect([[
             one^                           |
-            {12:one            }{114: }{n:1info}{1:         }|
-            {n:two            }{116: }{1:              }|
-            {n:three          }{116: }{1:              }|
-            {114: }{116:               }{1:              }|
-            {1:~                             }|*5
+            {12:one            }{116: }{n:1info}         |
+            {n:two            }{117:l}ine2          |
+            {n:three          }{117: }              |
+            {116:l}{117:ine4line4line4 }              |
+            line5line5                    |
+            {1:~                             }|*4
+            {5:-- }{6:match 1 of 3}               |
+          ]])
+        end
+        command('set pumheight=2')
+        feed('<C-x><C-O>')
+        if multigrid then
+          screen:expect({
+            grid = [[
+            ## grid 1
+              [2:------------------------------]|*10
+              [3:------------------------------]|
+            ## grid 2
+              oneone^                        |
+              line1                         |
+              line2line2line2line2          |
+              line3                         |
+              line4line4line4               |
+              line5line5                    |
+              {1:~                             }|*4
+            ## grid 3
+              {5:-- }{6:match 1 of 3}               |
+            ## grid 4
+              {n:1info}|
+            ## grid 5
+              {12: one            }{c: }{114: }|
+              {n: two            }{12: }{115: }|
+              {114: }{115:                 }|
+            ]],
+            win_pos = {
+              [2] = {
+                height = 10,
+                startcol = 0,
+                startrow = 0,
+                width = 30,
+                win = 1000,
+              },
+            },
+            float_pos = {
+              [5] = { -1, 'NW', 2, 1, 2, false, 100, 2, 1, 2 },
+              [4] = { 1001, 'NW', 1, 1, 19, false, 50, 1, 1, 19 },
+            },
+          })
+        else
+          screen:expect([[
+            oneone^                        |
+            li{12: one            }{c: }{116: }{n:info}      |
+            li{n: two            }{12: }{117:2}          |
+            li{116:n}{117:e3               }          |
+            line4line4line4               |
+            line5line5                    |
+            {1:~                             }|*4
             {5:-- }{6:match 1 of 3}               |
           ]])
         end
@@ -9342,6 +9412,16 @@ describe('builtin popupmenu', function()
             :!^                            |
           ]])
         end
+        feed('<ESC>:set pumheight=2<CR>Gi<C-X><C-O>')
+        if not multigrid then
+          screen:expect([[
+            one^                           |
+            {12:one            }{c: }{n:1info}{1:         }|
+            {n:two            }{12: }{1:              }|
+            {1:~                             }|*7
+            {5:-- }{6:match 1 of 3}               |
+          ]])
+        end
       end)
       it("no crash when 'pumborder' set #36337", function()
         command('set autocomplete pumborder=rounded complete=o cot=popup,menuone,noinsert')
@@ -9375,6 +9455,45 @@ describe('builtin popupmenu', function()
         poke_eventloop()
         assert_alive()
         eq({ 4, 1 }, { #fn.complete_info({ 'items' }).items, fn.pumvisible() })
+      end)
+
+      it("works with 'pummaxwidth' #test", function()
+        exec([[
+          set pummaxwidth=10
+          set cot+=menuone
+          let g:list = [#{word: repeat('fo', 10)}]
+        ]])
+        feed('S<C-x><C-o>')
+        if multigrid then
+          screen:expect({
+            grid = [[
+            ## grid 1
+              [2:------------------------------]|*10
+              [3:------------------------------]|
+            ## grid 2
+              fofofofofofofofofofo^          |
+              {1:~                             }|*9
+            ## grid 3
+              {5:-- The only match}             |
+            ## grid 4
+              ╭──────────╮|
+              │{12:fofofofof>}│|
+              ╰──────────╯|
+            ]],
+            float_pos = {
+              [4] = { -1, 'NW', 2, 1, 0, false, 100, 1, 1, 0 },
+            },
+          })
+        else
+          screen:expect([[
+            fofofofofofofofofofo^          |
+            ╭──────────╮{1:                  }|
+            │{12:fofofofof>}│{1:                  }|
+            ╰──────────╯{1:                  }|
+            {1:~                             }|*6
+            {5:-- The only match}             |
+          ]])
+        end
       end)
     end)
   end

@@ -189,6 +189,7 @@ error('Cannot require a meta file')
 --- |'SwapExists'
 --- |'Syntax'
 --- |'TabClosed'
+--- |'TabClosedPre'
 --- |'TabEnter'
 --- |'TabLeave'
 --- |'TabNew'
@@ -218,6 +219,7 @@ error('Cannot require a meta file')
 --- |'WinEnter'
 --- |'WinLeave'
 --- |'WinNew'
+--- |'WinNewPre'
 --- |'WinResized'
 --- |'WinScrolled'
 

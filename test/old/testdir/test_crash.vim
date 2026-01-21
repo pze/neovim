@@ -191,34 +191,49 @@ func Test_crash1_3()
   let buf = RunVimInTerminal('sh', #{cmd: 'sh'})
 
   let file = 'crash/poc_ex_substitute'
-  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'\<cr>"
+  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'"
   let args = printf(cmn_args, vim, file)
-  call term_sendkeys(buf, args)
-  call TermWait(buf, 150)
+  call s:RunCommandAndWait(buf, args)
 
   let file = 'crash/poc_uaf_exec_instructions'
-  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'\<cr>"
+  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'"
   let args = printf(cmn_args, vim, file)
-  call term_sendkeys(buf, args)
-  call TermWait(buf, 150)
+  call s:RunCommandAndWait(buf, args)
 
   let file = 'crash/poc_uaf_check_argument_types'
-  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'\<cr>"
+  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'"
   let args = printf(cmn_args, vim, file)
-  call term_sendkeys(buf, args)
-  call TermWait(buf, 150)
+  call s:RunCommandAndWait(buf, args)
 
   let file = 'crash/double_free'
-  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'\<cr>"
+  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'"
   let args = printf(cmn_args, vim, file)
-  call term_sendkeys(buf, args)
-  call TermWait(buf, 50)
+  call s:RunCommandAndWait(buf, args)
 
   let file = 'crash/dialog_changed_uaf'
-  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'\<cr>"
+  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'"
   let args = printf(cmn_args, vim, file)
-  call term_sendkeys(buf, args)
-  call TermWait(buf, 150)
+  call s:RunCommandAndWait(buf, args)
+
+  let file = 'crash/nullpointer'
+  let cmn_args = "%s -u NONE -i NONE -n -e -s -S %s -c ':qa!'"
+  let args = printf(cmn_args, vim, file)
+  call s:RunCommandAndWait(buf, args)
+
+  let file = 'crash/heap_overflow3'
+  let cmn_args = "%s -u NONE -i NONE -n -X -m -n -e -s -S %s -c ':qa!'"
+  let args = printf(cmn_args, vim, file)
+  call s:RunCommandAndWait(buf, args)
+
+  let file = 'crash/heap_overflow_glob2regpat'
+  let cmn_args = "%s -u NONE -i NONE -n -X -m -n -e -s -S %s -c ':qa!'"
+  let args = printf(cmn_args, vim, file)
+  call s:RunCommandAndWait(buf, args)
+
+  let file = 'crash/nullptr_regexp_nfa'
+  let cmn_args = "%s -u NONE -i NONE -n -X -m -n -e -s -S %s -c ':qa!'"
+  let args = printf(cmn_args, vim, file)
+  call s:RunCommandAndWait(buf, args)
 
   " clean up
   exe buf .. "bw!"
@@ -239,6 +254,24 @@ func TearDown()
   " but cleaning up in that test doesn't remove it. Let's try again at
   " the end of this test script
   call delete('Untitled')
+endfunc
+
+func Test_crash_bufwrite()
+  let lines =<< trim END
+    w! ++enc=ucs4 Xoutput
+    call writefile(['done'], 'Xbufwrite')
+  END
+  call writefile(lines, 'Xvimrc')
+  let opts = #{wait_for_ruler: 0, rows: 20}
+  let args = ' -u NONE -i NONE -b -S Xvimrc'
+  let buf = RunVimInTerminal(args .. ' samples/buffer-test.txt', opts)
+  call TermWait(buf, 1000)
+  call StopVimInTerminal(buf)
+  call WaitForAssert({-> assert_true(filereadable('Xbufwrite'))})
+  call assert_equal(['done'], readfile('Xbufwrite'))
+  call delete('Xbufwrite')
+  call delete('Xoutput')
+  call delete('Xvimrc')
 endfunc
 
 " vim: shiftwidth=2 sts=2 expandtab

@@ -116,6 +116,17 @@
 
 #include "buffer.c.generated.h"
 
+#ifdef ABORT_ON_INTERNAL_ERROR
+# define CHECK_CURBUF \
+  do { \
+    if (curwin != NULL && curwin->w_buffer != curbuf) { \
+      iemsg("curbuf != curwin->w_buffer"); \
+    } \
+  } while (0)
+#else
+# define CHECK_CURBUF do {} while (0)
+#endif
+
 static const char e_attempt_to_delete_buffer_that_is_in_use_str[]
   = N_("E937: Attempt to delete a buffer that is in use: %s");
 
@@ -128,6 +139,19 @@ typedef enum {
   kBffClearWinInfo = 1,
   kBffInitChangedtick = 2,
 } BufFreeFlags;
+
+static void trigger_undo_ftplugin(buf_T *buf, win_T *win)
+{
+  const bool win_was_locked = win->w_locked;
+  window_layout_lock();
+  buf->b_locked++;
+  win->w_locked = true;
+  // b:undo_ftplugin may be set, undo it
+  do_cmdline_cmd("if exists('b:undo_ftplugin') | exe b:undo_ftplugin | endif");
+  buf->b_locked--;
+  win->w_locked = win_was_locked;
+  window_layout_unlock();
+}
 
 /// Calculate the percentage that `part` is of the `whole`.
 int calc_percentage(int64_t part, int64_t whole)
@@ -492,6 +516,14 @@ static bool can_unload_buffer(buf_T *buf)
   return can_unload;
 }
 
+void buf_close_terminal(buf_T *buf)
+{
+  assert(buf->terminal);
+  buf->b_locked++;
+  terminal_close(&buf->terminal, -1);
+  buf->b_locked--;
+}
+
 /// Close the link to a buffer.
 ///
 /// @param win    If not NULL, set b_last_cursor.
@@ -522,6 +554,8 @@ bool close_buffer(win_T *win, buf_T *buf, int action, bool abort_if_last, bool i
   bool is_curwin = (curwin != NULL && curwin->w_buffer == buf);
   win_T *the_curwin = curwin;
   tabpage_T *the_curtab = curtab;
+
+  CHECK_CURBUF;
 
   // Force unloading or deleting when 'bufhidden' says so, but not for terminal
   // buffers.
@@ -640,12 +674,6 @@ bool close_buffer(win_T *win, buf_T *buf, int action, bool abort_if_last, bool i
     return true;
   }
 
-  if (buf->terminal) {
-    buf->b_locked++;
-    terminal_close(&buf->terminal, -1);
-    buf->b_locked--;
-  }
-
   // Always remove the buffer when there is no file name.
   if (buf->b_ffname == NULL) {
     del_buf = true;
@@ -703,18 +731,23 @@ bool close_buffer(win_T *win, buf_T *buf, int action, bool abort_if_last, bool i
 
   // Autocommands may have opened or closed windows for this buffer.
   // Decrement the count for the close we do here.
-  if (buf->b_nwindows > 0) {
+  // Don't decrement b_nwindows if the buffer wasn't displayed in any window
+  // before calling buf_freeall().
+  if (nwindows > 0 && buf->b_nwindows > 0) {
     buf->b_nwindows--;
   }
 
   // Remove the buffer from the list.
-  if (wipe_buf) {
+  // Do not wipe out the buffer if it is used in a window, or if autocommands
+  // wiped out all other buffers (unless when inside free_all_mem() where all
+  // buffers need to be freed and autocommands are blocked).
+  if (wipe_buf && buf->b_nwindows <= 0 && (buf->b_prev != NULL || buf->b_next != NULL
+#if defined(EXITFREE)
+                                           || entered_free_all_mem
+#endif
+                                           )) {
     if (clear_w_buf) {
       win->w_buffer = NULL;
-    }
-    // Do not wipe out the buffer if it is used in a window.
-    if (buf->b_nwindows > 0) {
-      return true;
     }
     FOR_ALL_TAB_WINDOWS(tp, wp) {
       mark_forget_file(wp, buf->b_fnum);
@@ -807,11 +840,12 @@ void buf_freeall(buf_T *buf, int flags)
   bufref_T bufref;
   set_bufref(&bufref, buf);
 
-  buf_updates_unload(buf, false);
-  if (!bufref_valid(&bufref)) {
-    // on_detach callback deleted the buffer.
-    return;
+  if (buf->terminal) {
+    buf_close_terminal(buf);
   }
+
+  buf_updates_unload(buf, false);
+
   if ((buf->b_ml.ml_mfp != NULL)
       && apply_autocmds(EVENT_BUFUNLOAD, buf->b_fname, buf->b_fname, false, buf)
       && !bufref_valid(&bufref)) {
@@ -917,6 +951,9 @@ static void free_buffer(buf_T *buf)
     au_pending_free_buf = buf;
   } else {
     xfree(buf);
+    if (curbuf == buf) {
+      curbuf = NULL;  // make clear it's not to be used
+    }
   }
 }
 
@@ -1323,17 +1360,10 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
     return FAIL;
   }
 
-  if (action == DOBUF_GOTO && buf != curbuf) {
-    if (!check_can_set_curbuf_forceit((flags & DOBUF_FORCEIT) != 0)) {
-      // disallow navigating to another buffer when 'winfixbuf' is applied
-      return FAIL;
-    }
-    if (buf->b_locked_split) {
-      // disallow navigating to a closing buffer, which like splitting,
-      // can result in more windows displaying it
-      emsg(_(e_cannot_switch_to_a_closing_buffer));
-      return FAIL;
-    }
+  if (action == DOBUF_GOTO && buf != curbuf
+      && !check_can_set_curbuf_forceit((flags & DOBUF_FORCEIT) != 0)) {
+    // disallow navigating to another buffer when 'winfixbuf' is applied
+    return FAIL;
   }
 
   if ((action == DOBUF_GOTO || action == DOBUF_SPLIT) && (buf->b_flags & BF_DUMMY)) {
@@ -1370,9 +1400,8 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
           return FAIL;
         }
       } else {
-        semsg(_("E89: No write since last change for buffer %" PRId64
-                " (add ! to override)"),
-              (int64_t)buf->b_fnum);
+        semsg(_(e_no_write_since_last_change_for_buffer_nr_add_bang_to_override),
+              buf->b_fnum);
         return FAIL;
       }
     }
@@ -1442,10 +1471,11 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
     // Then prefer the buffer we most recently visited.
     // Else try to find one that is loaded, after the current buffer,
     // then before the current buffer.
-    // Finally use any buffer.
+    // Finally use any buffer.  Skip buffers that are closing throughout.
     buf = NULL;  // Selected buffer.
     bp = NULL;   // Used when no loaded buffer found.
-    if (au_new_curbuf.br_buf != NULL && bufref_valid(&au_new_curbuf)) {
+    if (au_new_curbuf.br_buf != NULL && bufref_valid(&au_new_curbuf)
+        && !au_new_curbuf.br_buf->b_locked_split) {
       buf = au_new_curbuf.br_buf;
     } else if (curwin->w_jumplistlen > 0) {
       if (jop_flags & kOptJopFlagClean) {
@@ -1477,8 +1507,9 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
 
           if (buf != NULL) {
             // Skip current and unlisted bufs.  Also skip a quickfix
-            // buffer, it might be deleted soon.
-            if (buf == curbuf || !buf->b_p_bl || bt_quickfix(buf)) {
+            // or closing buffer, it might be deleted soon.
+            if (buf == curbuf || !buf->b_p_bl || bt_quickfix(buf)
+                || buf->b_locked_split) {
               buf = NULL;
             } else if (buf->b_ml.ml_mfp == NULL) {
               // skip unloaded buf, but may keep it for later
@@ -1522,7 +1553,8 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
           continue;
         }
         // in non-help buffer, try to skip help buffers, and vv
-        if (buf->b_help == curbuf->b_help && buf->b_p_bl && !bt_quickfix(buf)) {
+        if (buf->b_help == curbuf->b_help && buf->b_p_bl
+            && !bt_quickfix(buf) && !buf->b_locked_split) {
           if (buf->b_ml.ml_mfp != NULL) {           // found loaded buffer
             break;
           }
@@ -1538,7 +1570,7 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
     }
     if (buf == NULL) {          // No loaded buffer, find listed one
       FOR_ALL_BUFFERS(buf2) {
-        if (buf2->b_p_bl && buf2 != curbuf && !bt_quickfix(buf2)) {
+        if (buf2->b_p_bl && buf2 != curbuf && !bt_quickfix(buf2) && !buf2->b_locked_split) {
           buf = buf2;
           break;
         }
@@ -1546,7 +1578,7 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
     }
     if (buf == NULL) {          // Still no buffer, just take one
       buf = curbuf->b_next != NULL ? curbuf->b_next : curbuf->b_prev;
-      if (bt_quickfix(buf)) {
+      if (bt_quickfix(buf) || (buf != curbuf && buf->b_locked_split)) {
         buf = NULL;
       }
     }
@@ -1559,15 +1591,17 @@ static int do_buffer_ext(int action, int start, int dir, int count, int flags)
   }
 
   // make "buf" the current buffer
-  if (action == DOBUF_SPLIT) {      // split window first
-    // If 'switchbuf' is set jump to the window containing "buf".
-    if (swbuf_goto_win_with_buf(buf) != NULL) {
-      return OK;
-    }
-
-    if (win_split(0, 0) == FAIL) {
-      return FAIL;
-    }
+  // If 'switchbuf' is set jump to the window containing "buf".
+  if (action == DOBUF_SPLIT && swbuf_goto_win_with_buf(buf) != NULL) {
+    return OK;
+  }
+  // Whether splitting or not, don't open a closing buffer in more windows.
+  if (buf != curbuf && buf->b_locked_split) {
+    emsg(_(e_cannot_switch_to_a_closing_buffer));
+    return FAIL;
+  }
+  if (action == DOBUF_SPLIT && win_split(0, 0) == FAIL) {  // split window first
+    return FAIL;
   }
 
   // go to current buffer - nothing to do
@@ -1822,13 +1856,24 @@ void do_autochdir(void)
   }
 }
 
+void no_write_message_buf(buf_T *buf)
+{
+  if (buf->terminal
+      && channel_job_running((uint64_t)buf->b_p_channel)) {
+    emsg(_(e_job_still_running_add_bang_to_end_the_job));
+  } else {
+    semsg(_(e_no_write_since_last_change_for_buffer_nr_add_bang_to_override),
+          buf->b_fnum);
+  }
+}
+
 void no_write_message(void)
 {
   if (curbuf->terminal
       && channel_job_running((uint64_t)curbuf->b_p_channel)) {
-    emsg(_("E948: Job still running (add ! to end the job)"));
+    emsg(_(e_job_still_running_add_bang_to_end_the_job));
   } else {
-    emsg(_("E37: No write since last change (add ! to override)"));
+    emsg(_(e_no_write_since_last_change_add_bang_to_override));
   }
 }
 
@@ -1837,9 +1882,9 @@ void no_write_message_nobang(const buf_T *const buf)
 {
   if (buf->terminal
       && channel_job_running((uint64_t)buf->b_p_channel)) {
-    emsg(_("E948: Job still running"));
+    emsg(_(e_job_still_running));
   } else {
-    emsg(_("E37: No write since last change"));
+    emsg(_(e_no_write_since_last_change));
   }
 }
 
@@ -1937,6 +1982,7 @@ buf_T *buflist_new(char *ffname_arg, char *sfname_arg, linenr_T lnum, int flags)
     assert(curbuf != NULL);
     buf = curbuf;
     set_bufref(&bufref, buf);
+    trigger_undo_ftplugin(buf, curwin);
     // It's like this buffer is deleted.  Watch out for autocommands that
     // change curbuf!  If that happens, allocate a new buffer anyway.
     buf_freeall(buf, BFA_WIPE | BFA_DEL);
@@ -2063,6 +2109,7 @@ bool curbuf_reusable(void)
   return (curbuf != NULL
           && curbuf->b_ffname == NULL
           && curbuf->b_nwindows <= 1
+          && !curbuf->terminal
           && (curbuf->b_ml.ml_mfp == NULL || buf_is_empty(curbuf))
           && !bt_quickfix(curbuf)
           && !curbufIsChanged());
@@ -2145,6 +2192,7 @@ void free_buf_options(buf_T *buf, bool free_p_ff)
   clear_string_option(&buf->b_p_qe);
   buf->b_p_ac = -1;
   buf->b_p_ar = -1;
+  buf->b_p_fs = -1;
   buf->b_p_ul = NO_LOCAL_UNDOLEVEL;
   clear_string_option(&buf->b_p_lw);
   clear_string_option(&buf->b_p_bkc);
@@ -2169,7 +2217,7 @@ int buflist_getfile(int n, linenr_T lnum, int options, int forceit)
     if ((options & GETF_ALT) && n == 0) {
       emsg(_(e_noalt));
     } else {
-      semsg(_("E92: Buffer %" PRId64 " not found"), (int64_t)n);
+      semsg(_(e_buffer_nr_not_found), n);
     }
     return FAIL;
   }
@@ -2914,7 +2962,7 @@ void buflist_list(exarg_T *eap)
                              : (bufIsChanged(buf) ? '+' : ' ');
     int ro_char = !MODIFIABLE(buf) ? '-' : (buf->b_p_ro ? '=' : ' ');
     if (buf->terminal) {
-      ro_char = channel_job_running((uint64_t)buf->b_p_channel) ? 'R' : 'F';
+      ro_char = terminal_running(buf->terminal) ? 'R' : 'F';
     }
 
     msg_putchar('\n');
@@ -3787,6 +3835,7 @@ static int chk_modeline(linenr_T lnum, int flags)
 {
   char *e;
   int retval = OK;
+  ESTACK_CHECK_DECLARATION;
 
   int prev = -1;
   char *s = ml_get(lnum);
@@ -3842,6 +3891,7 @@ static int chk_modeline(linenr_T lnum, int flags)
 
   // prepare for emsg()
   estack_push(ETYPE_MODELINE, "modelines", lnum);
+  ESTACK_CHECK_SETUP;
 
   bool end = false;
   while (end == false) {
@@ -3898,6 +3948,7 @@ static int chk_modeline(linenr_T lnum, int flags)
                                       // careful not to go off the end
   }
 
+  ESTACK_CHECK_NOW;
   estack_pop();
   xfree(linecopy);
 
@@ -4114,10 +4165,7 @@ bool buf_contents_changed(buf_T *buf)
   return differ;
 }
 
-/// Wipe out a buffer and decrement the last buffer number if it was used for
-/// this buffer.  Call this to wipe out a temp buffer that does not contain any
-/// marks.
-///
+/// Wipe out a (typically temporary) buffer.
 /// @param aucmd  When true trigger autocommands.
 void wipe_buffer(buf_T *buf, bool aucmd)
 {

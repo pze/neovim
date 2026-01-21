@@ -1041,6 +1041,13 @@ Syntax				When the 'syntax' option has been set.  The
 				this option was set. <amatch> expands to the
 				new value of 'syntax'.
 				See |:syn-on|.
+							*TabClosed*
+TabClosed			After closing a tab page. <afile> expands to
+				the tab page number.
+							*TabClosedPre*
+TabClosedPre			Before closing a tab page.  The window layout
+				is locked, thus opening and closing of windows
+				is prohibited.
 							*TabEnter*
 TabEnter			Just after entering a tab page. |tab-page|
 				After WinEnter.
@@ -1055,9 +1062,6 @@ TabNew				When creating a new tab page. |tab-page|
 							*TabNewEntered*
 TabNewEntered			After entering a new tab page. |tab-page|
 				After BufEnter.
-							*TabClosed*
-TabClosed			After closing a tab page. <afile> expands to
-				the tab page number.
 							*TermOpen*
 TermOpen			When a |terminal| job is starting.  Can be
 				used to configure the terminal buffer. To get
@@ -1081,6 +1085,7 @@ TermRequest			When a |:terminal| child process emits an OSC,
 				fields:
 
 				- sequence: the received sequence
+				- terminator: the received sequence terminator (i.e. BEL or ST)
 				- cursor: (1,0)-indexed, buffer-relative
 				  position of the cursor when the sequence was
 				  received (line number may be <= 0 if the
@@ -1231,6 +1236,20 @@ WinLeave			Before leaving a window.  If the window to be
 				WinLeave autocommands (but not for ":new").
 				Not used for ":qa" or ":q" when exiting Vim.
 				Before WinClosed.
+							*WinNewPre*
+WinNewPre			Before creating a new window.  Triggered
+				before commands that modify window layout by
+				creating a split.
+				Not done when creating tab pages and for the
+				first window, as the window structure is not
+				initialized yet and so is generally not safe.
+				It is not allowed to modify window layout
+				while executing commands for the WinNewPre
+				event.
+				Most useful to store current window layout
+				and compare it with the new layout after the
+				Window has been created.
+
 							*WinNew*
 WinNew				When a new window was created.  Not done for
 				the first window, when Vim has just started.

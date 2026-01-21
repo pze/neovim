@@ -1279,7 +1279,7 @@ static void do_filter(linenr_T line1, linenr_T line2, exarg_T *eap, char *cmd, b
   curwin->w_cursor.lnum = line1;
   curwin->w_cursor.col = 0;
   changed_line_abv_curs();
-  invalidate_botline(curwin);
+  invalidate_botline_win(curwin);
 
   // When using temp files:
   // 1. * Form temp file names
@@ -2095,6 +2095,7 @@ void do_wqall(exarg_T *eap)
 {
   int error = 0;
   int save_forceit = eap->forceit;
+  bool save_exiting = exiting;
 
   if (eap->cmdidx == CMD_xall || eap->cmdidx == CMD_wqall) {
     if (before_quit_all(eap) == FAIL) {
@@ -2104,10 +2105,12 @@ void do_wqall(exarg_T *eap)
   }
 
   FOR_ALL_BUFFERS(buf) {
-    if (exiting
+    if (exiting && !eap->forceit
         && buf->terminal
+        // TODO(zeertzjq): this always returns false for nvim_open_term() terminals.
+        // Use terminal_running() instead?
         && channel_job_running((uint64_t)buf->b_p_channel)) {
-      no_write_message_nobang(buf);
+      no_write_message_buf(buf);
       error++;
     } else if (!bufIsChanged(buf) || bt_dontwrite(buf)) {
       continue;
@@ -2145,7 +2148,7 @@ void do_wqall(exarg_T *eap)
     if (!error) {
       getout(0);                // exit Vim
     }
-    not_exiting();
+    not_exiting(save_exiting);
   }
 }
 
@@ -2599,7 +2602,10 @@ int do_ecmd(int fnum, char *ffname, char *sfname, exarg_T *eap, linenr_T newlnum
         // oldwin->w_buffer to NULL.
         u_sync(false);
         const bool did_decrement
-          = close_buffer(oldwin, curbuf, (flags & ECMD_HIDE) || curbuf->terminal ? 0 : DOBUF_UNLOAD,
+          = close_buffer(oldwin, curbuf,
+                         (flags & ECMD_HIDE)
+                         || (curbuf->terminal && terminal_running(curbuf->terminal))
+                         ? 0 : DOBUF_UNLOAD,
                          false, false);
 
         // Autocommands may have closed the window.
@@ -4182,7 +4188,8 @@ static int do_sub(exarg_T *eap, const proftime_T timeout, const int cmdpreview_n
           if (nmatch == 1) {
             p1 = sub_firstline;
           } else {
-            p1 = ml_get(sub_firstlnum + (linenr_T)nmatch - 1);
+            linenr_T lastlnum = sub_firstlnum + (linenr_T)nmatch - 1;
+            p1 = ml_get(lastlnum);
             nmatch_tl += nmatch - 1;
           }
           int copy_len = regmatch.startpos[0].col - copycol;

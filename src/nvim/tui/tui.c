@@ -337,11 +337,9 @@ static void tui_reset_key_encoding(TUIData *tui)
   }
 }
 
-/// Write the OSC 11 sequence to the terminal emulator to query the current
-/// background color.
+/// Write the OSC 11 sequence to the terminal emulator to query the current background color.
 ///
-/// The response will be handled by the TermResponse autocommand created in
-/// _defaults.lua.
+/// Response will be handled by the TermResponse handler in _core/defaults.lua.
 void tui_query_bg_color(TUIData *tui)
   FUNC_ATTR_NONNULL_ALL
 {
@@ -1391,7 +1389,7 @@ void tui_mode_change(TUIData *tui, String mode, Integer mode_idx)
   // If stdin is not a TTY, the LHS of pipe may change the state of the TTY
   // after calling uv_tty_set_mode. So, set the mode of the TTY again here.
   // #13073
-  if (tui->is_starting && !stdin_isatty) {
+  if (tui->out_isatty && tui->is_starting && !stdin_isatty) {
     int ret = uv_tty_set_mode(&tui->output_handle.tty, UV_TTY_MODE_NORMAL);
     if (ret) {
       ELOG("uv_tty_set_mode failed: %s", uv_strerror(ret));
@@ -1984,7 +1982,7 @@ static void terminfo_set_str(TUIData *tui, TerminfoDef str, const char *val)
 /// Determine if the terminal supports truecolor or not.
 ///
 /// note: We get another chance at detecting these in the nvim server process, see
-/// the use of vim.termcap in runtime/lua/vim/_defaults.lua
+/// the use of vim.termcap in runtime/lua/vim/_core/defaults.lua
 ///
 /// If terminfo contains Tc, RGB, or both setrgbf and setrgbb capabilities, return true.
 static bool term_has_truecolor(TUIData *tui, const char *colorterm)

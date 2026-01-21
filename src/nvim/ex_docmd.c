@@ -964,6 +964,7 @@ void handle_did_throw(void)
   assert(current_exception != NULL);
   char *p = NULL;
   msglist_T *messages = NULL;
+  ESTACK_CHECK_DECLARATION;
 
   // If the uncaught exception is a user exception, report it as an
   // error.  If it is an error exception, display the saved error
@@ -985,6 +986,7 @@ void handle_did_throw(void)
   }
 
   estack_push(ETYPE_EXCEPT, current_exception->throw_name, current_exception->throw_lnum);
+  ESTACK_CHECK_SETUP;
   current_exception->throw_name = NULL;
 
   discard_current_exception();              // uses IObuff if 'verbose'
@@ -1009,6 +1011,7 @@ void handle_did_throw(void)
     xfree(p);
   }
   xfree(SOURCING_NAME);
+  ESTACK_CHECK_NOW;
   estack_pop();
 }
 
@@ -4727,8 +4730,8 @@ static int check_more(bool message, bool forceit)
         }
         return FAIL;
       }
-      semsg(NGETTEXT("E173: %" PRId64 " more file to edit",
-                     "E173: %" PRId64 " more files to edit", n), (int64_t)n);
+      semsg(NGETTEXT("E173: %d more file to edit",
+                     "E173: %d more files to edit", n), n);
       quitmore = 2;                 // next try to quit is allowed
     }
     return FAIL;
@@ -4776,9 +4779,9 @@ static void ex_highlight(exarg_T *eap)
 
 /// Call this function if we thought we were going to exit, but we won't
 /// (because of an error).  May need to restore the terminal mode.
-void not_exiting(void)
+void not_exiting(bool save_exiting)
 {
-  exiting = false;
+  exiting = save_exiting;
 }
 
 /// Call this function if we thought we were going to restart, but we won't
@@ -4855,6 +4858,7 @@ static void ex_quit(exarg_T *eap)
     return;
   }
 
+  bool save_exiting = exiting;
   // If there is only one relevant window we will exit.
   if (check_more(false, eap->forceit) == OK && only_one_window()) {
     exiting = true;
@@ -4865,7 +4869,7 @@ static void ex_quit(exarg_T *eap)
                         | CCGD_EXCMD))
       || check_more(true, eap->forceit) == FAIL
       || (only_one_window() && check_changed_any(eap->forceit, true))) {
-    not_exiting();
+    not_exiting(save_exiting);
   } else {
     // quit last window
     // Note: only_one_window() returns true, even so a help window is
@@ -4876,7 +4880,7 @@ static void ex_quit(exarg_T *eap)
     if (only_one_window() && (ONE_WINDOW || eap->addr_count == 0)) {
       getout(0);
     }
-    not_exiting();
+    not_exiting(save_exiting);
     // close window; may free buffer
     win_close(wp, !buf_hide(wp->w_buffer) || eap->forceit, eap->forceit);
   }
@@ -4922,12 +4926,12 @@ static void ex_quitall(exarg_T *eap)
   if (before_quit_all(eap) == FAIL) {
     return;
   }
+  bool save_exiting = exiting;
   exiting = true;
-  if (!eap->forceit && check_changed_any(false, false)) {
-    not_exiting();
-    return;
+  if (eap->forceit || !check_changed_any(false, false)) {
+    getout(0);
   }
-  getout(0);
+  not_exiting(save_exiting);
 }
 
 /// ":restart": restart the Nvim server (using ":qall!").
@@ -5030,6 +5034,9 @@ void ex_win_close(int forceit, win_T *win, tabpage_T *tp)
     emsg(_(e_autocmd_close));
     return;
   }
+  if (!win->w_floating && window_layout_locked(CMD_close)) {
+    return;
+  }
 
   buf_T *buf = win->w_buffer;
 
@@ -5071,6 +5078,10 @@ static void ex_tabclose(exarg_T *eap)
     return;
   }
 
+  if (window_layout_locked(CMD_tabclose)) {
+    return;
+  }
+
   int tab_number = get_tabpage_arg(eap);
   if (eap->errmsg != NULL) {
     return;
@@ -5099,6 +5110,10 @@ static void ex_tabonly(exarg_T *eap)
 
   if (first_tabpage->tp_next == NULL) {
     msg(_("Already only one tab page"), 0);
+    return;
+  }
+
+  if (window_layout_locked(CMD_tabonly)) {
     return;
   }
 
@@ -5132,6 +5147,14 @@ static void ex_tabonly(exarg_T *eap)
 /// Close the current tab page.
 void tabpage_close(int forceit)
 {
+  if (window_layout_locked(CMD_tabclose)) {
+    return;
+  }
+
+  trigger_tabclosedpre(curtab);
+  curtab->tp_did_tabclosedpre = true;
+  tabpage_T *const save_curtab = curtab;
+
   // First close all the windows but the current one.  If that worked then
   // close the last window in this tab, that will close it.
   while (curwin->w_floating) {
@@ -5142,6 +5165,11 @@ void tabpage_close(int forceit)
   }
   if (ONE_WINDOW) {
     ex_win_close(forceit, curwin, NULL);
+  }
+  if (curtab == save_curtab) {
+    // When closing the tab page failed, reset tp_did_tabclosedpre so that
+    // TabClosedPre behaves consistently on next :close vs :tabclose.
+    curtab->tp_did_tabclosedpre = false;
   }
 }
 
@@ -5154,6 +5182,13 @@ void tabpage_close_other(tabpage_T *tp, int forceit)
   int done = 0;
   char prev_idx[NUMBUFLEN];
 
+  if (window_layout_locked(CMD_SIZE)) {
+    return;
+  }
+
+  trigger_tabclosedpre(tp);
+  tp->tp_did_tabclosedpre = true;
+
   // Limit to 1000 windows, autocommands may add a window while we close
   // one.  OK, so I'm paranoid...
   while (++done < 1000) {
@@ -5161,20 +5196,33 @@ void tabpage_close_other(tabpage_T *tp, int forceit)
     win_T *wp = tp->tp_lastwin;
     ex_win_close(forceit, wp, tp);
 
-    // Autocommands may delete the tab page under our fingers and we may
-    // fail to close a window with a modified buffer.
-    if (!valid_tabpage(tp) || tp->tp_lastwin == wp) {
+    // Autocommands may delete the tab page under our fingers.
+    if (!valid_tabpage(tp)) {
       break;
     }
+    // We may fail to close a window with a modified buffer.
+    if (tp->tp_lastwin == wp) {
+      done = 1000;
+      break;
+    }
+  }
+  if (done >= 1000) {
+    // When closing the tab page failed, reset tp_did_tabclosedpre so that
+    // TabClosedPre behaves consistently on next :close vs :tabclose.
+    tp->tp_did_tabclosedpre = false;
+    return;
   }
 }
 
 /// ":only".
 static void ex_only(exarg_T *eap)
 {
-  win_T *wp;
+  if (window_layout_locked(CMD_only)) {
+    return;
+  }
 
   if (eap->addr_count > 0) {
+    win_T *wp;
     linenr_T wnr = eap->line2;
     for (wp = firstwin; --wnr > 0;) {
       if (wp->w_next == NULL) {
@@ -5182,11 +5230,9 @@ static void ex_only(exarg_T *eap)
       }
       wp = wp->w_next;
     }
-  } else {
-    wp = curwin;
-  }
-  if (wp != curwin) {
-    win_goto(wp);
+    if (wp != curwin) {
+      win_goto(wp);
+    }
   }
   close_others(true, eap->forceit);
 }
@@ -5198,11 +5244,11 @@ static void ex_hide(exarg_T *eap)
     return;
   }
 
+  win_T *win = NULL;
   if (eap->addr_count == 0) {
-    win_close(curwin, false, eap->forceit);  // don't free buffer
+    win = curwin;
   } else {
     int winnr = 0;
-    win_T *win = NULL;
 
     FOR_ALL_WINDOWS_IN_TAB(wp, curtab) {
       winnr++;
@@ -5214,8 +5260,13 @@ static void ex_hide(exarg_T *eap)
     if (win == NULL) {
       win = lastwin;
     }
-    win_close(win, false, eap->forceit);
   }
+
+  if (!win->w_floating && window_layout_locked(CMD_hide)) {
+    return;
+  }
+
+  win_close(win, false, eap->forceit);  // don't free buffer
 }
 
 /// ":stop" and ":suspend": Suspend Vim.
@@ -5242,6 +5293,7 @@ static void ex_exit(exarg_T *eap)
     return;
   }
 
+  bool save_exiting = exiting;
   // we plan to exit if there is only one relevant window
   if (check_more(false, eap->forceit) == OK && only_one_window()) {
     exiting = true;
@@ -5253,13 +5305,13 @@ static void ex_exit(exarg_T *eap)
       || before_quit_autocmds(curwin, false, eap->forceit)
       || check_more(true, eap->forceit) == FAIL
       || (only_one_window() && check_changed_any(eap->forceit, false))) {
-    not_exiting();
+    not_exiting(save_exiting);
   } else {
     if (only_one_window()) {
       // quit last window, exit Vim
       getout(0);
     }
-    not_exiting();
+    not_exiting(save_exiting);
     // Quit current window, may free the buffer.
     win_close(curwin, !buf_hide(curwin->w_buffer), eap->forceit);
   }
@@ -8058,7 +8110,7 @@ static void ex_lsp(exarg_T *eap)
 
   ADD_C(args, CSTR_AS_OBJ(eap->arg));
 
-  NLUA_EXEC_STATIC("require'vim._core.ex_cmd.lsp'.ex_lsp(...)", args, kRetNilBool, NULL, &err);
+  NLUA_EXEC_STATIC("require'vim._core.ex_cmd'.ex_lsp(...)", args, kRetNilBool, NULL, &err);
   if (ERROR_SET(&err)) {
     emsg_multiline(err.msg, "lua_error", HLF_E, true);
   }

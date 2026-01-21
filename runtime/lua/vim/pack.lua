@@ -1,7 +1,7 @@
 --- @brief
 ---
----WORK IN PROGRESS built-in plugin manager! Early testing of existing features
----is appreciated, but expect breaking changes without notice.
+--- Install, update, and delete external plugins. WARNING: It is still considered
+--- experimental, yet should be stable enough for daily use.
 ---
 ---Manages plugins only in a dedicated [vim.pack-directory]() (see |packages|):
 ---`$XDG_DATA_HOME/nvim/site/pack/core/opt`. `$XDG_DATA_HOME/nvim/site` needs to
@@ -24,9 +24,9 @@
 ---(including after deleting whole file), but `version` fields will be missing
 ---for not yet added plugins.
 ---
----Example workflows ~
+---[vim.pack-examples]()
 ---
----Basic install and management:
+---Basic install and management ~
 ---
 ---- Add |vim.pack.add()| call(s) to 'init.lua':
 ---```lua
@@ -70,47 +70,95 @@
 ---      To discard updates execute |:quit|.
 ---    - (Optionally) |:restart| to start using code from updated plugins.
 ---
----Switch plugin's version:
----- Update 'init.lua' for plugin to have desired `version`. Let's say, plugin
----named 'plugin1' has changed to `vim.version.range('*')`.
----- |:restart|. The plugin's actual revision on disk is not yet changed.
----  Only plugin's `version` in |vim.pack-lockfile| is updated.
----- Execute `vim.pack.update({ 'plugin1' })`.
+---Use shorter source ~
+---
+--- Create custom Lua helpers:
+---
+---```lua
+---
+---local gh = function(x) return 'https://github.com/' .. x end
+---local cb = function(x) return 'https://codeberg.org/' .. x end
+---vim.pack.add({ gh('user/plugin1'), cb('user/plugin2') })
+---```
+---
+---Another approach is to utilize Git's `insteadOf` configuration:
+---- `git config --global url."https://github.com/".insteadOf "gh:"`
+---- `git config --global url."https://codeberg.org/".insteadOf "cb:"`
+---- In 'init.lua': `vim.pack.add({ 'gh:user/plugin1', 'cb:user/plugin2' })`.
+---  These sources will be used verbatim in |vim.pack-lockfile|, so reusing
+---  the config on different machine will require the same Git configuration.
+---
+---Explore installed plugins ~
+---
+---- `vim.pack.update(nil, { offline = true })`
+---- Navigate between plugins with `[[` and `]]`. List them with `gO`
+---  (|vim.lsp.buf.document_symbol()|).
+---
+---Switch plugin's version and/or source ~
+---
+---- Update 'init.lua' for plugin to have desired `version` and/or `src`.
+---  Let's say, the switch is for plugin named 'plugin1'.
+---- |:restart|. The plugin's state on disk (revision and/or tracked source)
+---  is not yet changed. Only plugin's `version` in |vim.pack-lockfile| is updated.
+---- Execute `vim.pack.update({ 'plugin1' })`. The plugin's source is updated.
+---  If only switching version, use `{ offline = true }` option table.
 ---- Review changes and either confirm or discard them. If discarded, revert
----any changes in 'init.lua' as well or you will be prompted again next time
----you run |vim.pack.update()|.
+---  `version` change in 'init.lua' as well or you will be prompted again next time
+---  you run |vim.pack.update()|.
 ---
----Switch plugin's source:
----- Update 'init.lua' for plugin to have desired `src`.
----- |:restart|. This will cleanly reinstall plugin from the new source.
+---Freeze plugin from being updated ~
 ---
----Freeze plugin from being updated:
 ---- Update 'init.lua' for plugin to have `version` set to current revision.
 ---Get it from |vim.pack-lockfile| (plugin's field `rev`; looks like `abc12345`).
 ---- |:restart|.
 ---
----Unfreeze plugin to start receiving updates:
+---Unfreeze plugin to start receiving updates ~
+---
 ---- Update 'init.lua' for plugin to have `version` set to whichever version
 ---you want it to be updated.
 ---- |:restart|.
 ---
----Revert plugin after an update:
----- Locate plugin's revision at working state. For example:
----    - If there is a previous version of |vim.pack-lockfile| (like from version
----    control history), use it to get plugin's `rev` field.
----    - If there is a log file ("nvim-pack.log" at "log" |stdpath()|), open it
----      and navigate to latest updates (at the bottom). Locate lines about plugin
----      update details and use revision from "State before".
----- Freeze plugin to target revision (set `version` and |:restart|).
----- Run `vim.pack.update({ 'plugin-name' }, { force = true })` to make plugin
----  state on disk follow target revision. |:restart|.
----- When ready to deal with updating plugin, unfreeze it.
+---Revert plugin after an update ~
 ---
----Remove plugins from disk:
----- Use |vim.pack.del()| with a list of plugin names to remove. Make sure their specs
----are not included in |vim.pack.add()| call in 'init.lua' or they will be reinstalled.
+---- Revert the |vim.pack-lockfile| to the state before the update:
+---    - If Git tracked: `git checkout HEAD -- nvim-pack-lock.json`
+---    - If not tracked: examine log file ("nvim-pack.log" at "log" |stdpath()|),
+---      locate the revisions before the latest update, and (carefully) adjust
+---      current lockfile to have those revisions.
+---- |:restart|.
+---- `vim.pack.update({ 'plugin' }, { offline = true, target = 'lockfile' })`.
+---  Read and confirm.
 ---
----Available events to hook into ~
+---Synchronize config across machines ~
+---
+---- On main machine:
+---     - Add |vim.pack-lockfile| to VCS.
+---     - Push to the remote server.
+---- On secondary machine:
+---     - Pull from the server.
+---     - |:restart|. New plugins (not present locally, but present in the lockfile)
+---       are installed at proper revision.
+---     - `vim.pack.update(nil, { target = 'lockfile' })`. Read and confirm.
+---     - Manually delete outdated plugins (present locally, but were not present
+---       in the lockfile prior to restart) with `vim.pack.del( { 'plugin' })`.
+---       They can be located by examining the VCS difference of the lockfile
+---       (`git diff -- nvim-pack-lock.json` for Git).
+---
+---Remove plugins from disk ~
+---
+---- Remove plugin specs from |vim.pack.add()| calls in 'init.lua' or they will be
+---  reinstalled later.
+---- |:restart|.
+---- Use |vim.pack.del()| with a list of plugin names to remove. Use |vim.pack.get()|
+---  to get all non-active plugins:
+---```lua
+---vim.iter(vim.pack.get())
+---  :filter(function(x) return not x.active end)
+---  :map(function(x) return x.spec.name end)
+---  :totable()
+---```
+---
+---[vim.pack-events]()
 ---
 ---- [PackChangedPre]() - before trying to change plugin's state.
 ---- [PackChanged]() - after plugin's state has changed.
@@ -131,6 +179,7 @@
 ---
 ---   -- Run build script after plugin's code has changed
 ---   if name == 'plug-1' and (kind == 'install' or kind == 'update') then
+---     -- Append `:wait()` if you need synchronous execution
 ---     vim.system({ 'make' }, { cwd = ev.data.path })
 ---   end
 ---
@@ -215,17 +264,12 @@ end
 --- @param url string
 --- @param path string
 local function git_clone(url, path)
-  local cmd = { 'clone', '--quiet', '--no-checkout', '--recurse-submodules' }
+  local cmd = { 'clone', '--quiet', '--no-checkout' }
 
   if vim.startswith(url, 'file://') then
     cmd[#cmd + 1] = '--no-hardlinks'
-  else
-    if git_version >= vim.version.parse('2.36') then
-      cmd[#cmd + 1] = '--filter=blob:none'
-      cmd[#cmd + 1] = '--also-filter-submodules'
-    elseif git_version >= vim.version.parse('2.27') then
-      cmd[#cmd + 1] = '--filter=blob:none'
-    end
+  elseif git_version >= vim.version.parse('2.27') then
+    cmd[#cmd + 1] = '--filter=blob:none'
   end
 
   vim.list_extend(cmd, { '--origin', 'origin', url, path })
@@ -605,17 +649,26 @@ end
 --- @async
 --- @param p vim.pack.Plug
 --- @param timestamp string
-local function checkout(p, timestamp)
+--- @param skip_stash? boolean
+local function checkout(p, timestamp, skip_stash)
   infer_revisions(p)
 
-  local stash_cmd = { 'stash', '--quiet' }
-  if git_version > vim.version.parse('2.13') then
-    stash_cmd[#stash_cmd + 1] = '--message'
-    stash_cmd[#stash_cmd + 1] = ('vim.pack: %s Stash before checkout'):format(timestamp)
+  if not skip_stash then
+    local stash_cmd = { 'stash', '--quiet' }
+    if git_version > vim.version.parse('2.13') then
+      stash_cmd[#stash_cmd + 1] = '--message'
+      stash_cmd[#stash_cmd + 1] = ('vim.pack: %s Stash before checkout'):format(timestamp)
+    end
+    git_cmd(stash_cmd, p.path)
   end
-  git_cmd(stash_cmd, p.path)
 
   git_cmd({ 'checkout', '--quiet', p.info.sha_target }, p.path)
+
+  local submodule_cmd = { 'submodule', 'update', '--init', '--recursive' }
+  if git_version >= vim.version.parse('2.36') then
+    submodule_cmd[#submodule_cmd + 1] = '--filter=blob:none'
+  end
+  git_cmd(submodule_cmd, p.path)
 
   plugin_lock.plugins[p.spec.name].rev = p.info.sha_target
 
@@ -642,7 +695,7 @@ local function install_list(plug_list, confirm)
     -- Prefer revision from the lockfile instead of using `version`
     p.info.sha_target = (plugin_lock.plugins[p.spec.name] or {}).rev
 
-    checkout(p, timestamp)
+    checkout(p, timestamp, true)
     p.info.installed = true
 
     trigger_event(p, 'PackChanged', 'install')
@@ -922,12 +975,6 @@ function M.add(specs, opts)
   local plugs_to_install = {} --- @type vim.pack.Plug[]
   local needs_lock_write = false
   for _, p in ipairs(plugs) do
-    -- Allow to cleanly change `src` of an already installed plugin
-    if p.info.installed and plugin_lock.plugins[p.spec.name].src ~= p.spec.src then
-      M.del({ p.spec.name })
-      p.info.installed = false
-    end
-
     -- Detect `version` change
     local p_lock = plugin_lock.plugins[p.spec.name] or {}
     needs_lock_write = needs_lock_write or p_lock.version ~= p.spec.version
@@ -975,11 +1022,12 @@ end
 --- @param p vim.pack.Plug
 --- @return string
 local function compute_feedback_lines_single(p)
+  local active_suffix = active_plugins[p.path] ~= nil and '' or ' (not active)'
   if p.info.err ~= '' then
-    return ('## %s\n\n %s'):format(p.spec.name, p.info.err:gsub('\n', '\n  '))
+    return ('## %s%s\n\n %s'):format(p.spec.name, active_suffix, p.info.err:gsub('\n', '\n  '))
   end
 
-  local parts = { '## ' .. p.spec.name .. '\n' }
+  local parts = { ('## %s%s\n'):format(p.spec.name, active_suffix) }
   local version_suffix = p.info.version_str == '' and '' or (' (%s)'):format(p.info.version_str)
 
   if p.info.sha_head == p.info.sha_target then
@@ -1112,7 +1160,7 @@ local function get_update_map(bufnr)
   for _, l in ipairs(lines) do
     local name = l:match('^## (.+)$')
     if name and is_in_update then
-      res[name] = true
+      res[name:gsub(' %(not active%)$', '')] = true
     end
 
     local group = l:match('^# (%S+)')
@@ -1126,6 +1174,14 @@ end
 --- @class vim.pack.keyset.update
 --- @inlinedoc
 --- @field force? boolean Whether to skip confirmation and make updates immediately. Default `false`.
+---
+--- @field offline? boolean Whether to skip downloading new updates. Default: `false`.
+---
+--- How to compute a new plugin revision. One of:
+---     - "version" (default) - use latest revision matching `version` from plugin specification.
+---     - "lockfile" - use revision from the lockfile. Useful for reverting or performing controlled
+---       update.
+--- @field target? string
 
 --- Update plugins
 ---
@@ -1145,8 +1201,9 @@ end
 ---           show more information at cursor. Like details of particular pending
 ---           change or newer tag.
 ---         - 'textDocument/codeAction' (`gra` via |lsp-defaults| or |vim.lsp.buf.code_action()|) -
----           show code actions available for "plugin at cursor". Like "delete", "update",
----           or "skip updating".
+---           show code actions available for "plugin at cursor".
+---           Like "delete" (if plugin is not active), "update" or "skip updating"
+---           (if there are pending updates).
 ---
 ---       Execute |:write| to confirm update, execute |:quit| to discard the update.
 ---     - If `true`, make updates right away.
@@ -1160,7 +1217,7 @@ end
 --- @param opts? vim.pack.keyset.update
 function M.update(names, opts)
   vim.validate('names', names, vim.islist, true, 'list')
-  opts = vim.tbl_extend('force', { force = false }, opts or {})
+  opts = vim.tbl_extend('force', { force = false, offline = false, target = 'version' }, opts or {})
 
   local plug_list = plug_list_from_names(names)
   if #plug_list == 0 then
@@ -1172,18 +1229,31 @@ function M.update(names, opts)
 
   -- Perform update
   local timestamp = get_timestamp()
+  local needs_lock_write = opts.force --- @type boolean
 
   --- @async
   --- @param p vim.pack.Plug
   local function do_update(p)
+    local l_data = plugin_lock.plugins[p.spec.name]
+    -- Ensure proper `origin` if needed
+    if l_data.src ~= p.spec.src then
+      git_cmd({ 'remote', 'set-url', 'origin', p.spec.src }, p.path)
+      plugin_lock.plugins[p.spec.name].src = p.spec.src
+      needs_lock_write = true
+    end
+
     -- Fetch
-    if not opts._offline then
+    if not opts.offline then
       -- Using '--tags --force' means conflicting tags will be synced with remote
       local args = { 'fetch', '--quiet', '--tags', '--force', '--recurse-submodules=yes', 'origin' }
       git_cmd(args, p.path)
     end
 
     -- Compute change info: changelog if any, new tags if nothing to update
+    if opts.target == 'lockfile' then
+      p.info.version_str = '*lockfile*'
+      p.info.sha_target = l_data.rev
+    end
     infer_update_details(p)
 
     -- Checkout immediately if no need to confirm
@@ -1193,12 +1263,15 @@ function M.update(names, opts)
       trigger_event(p, 'PackChanged', 'update')
     end
   end
-  local progress_title = opts.force and (opts._offline and 'Applying updates' or 'Updating')
-    or 'Downloading updates'
+  local progress_title = opts.force and (opts.offline and 'Applying updates' or 'Updating')
+    or (opts.offline and 'Computing updates' or 'Downloading updates')
   run_list(plug_list, do_update, progress_title)
 
-  if opts.force then
+  if needs_lock_write then
     lock_write()
+  end
+
+  if opts.force then
     feedback_log(plug_list)
     return
   end
@@ -1232,12 +1305,18 @@ function M.update(names, opts)
   end)
 end
 
+--- @class vim.pack.keyset.del
+--- @inlinedoc
+--- @field force? boolean Whether to allow deleting an active plugin. Default `false`.
+
 --- Remove plugins from disk
 ---
 --- @param names string[] List of plugin names to remove from disk. Must be managed
 --- by |vim.pack|, not necessarily already added to current session.
-function M.del(names)
+--- @param opts? vim.pack.keyset.del
+function M.del(names, opts)
   vim.validate('names', names, vim.islist, false, 'list')
+  opts = vim.tbl_extend('force', { force = false }, opts or {})
 
   local plug_list = plug_list_from_names(names)
   if #plug_list == 0 then
@@ -1247,19 +1326,31 @@ function M.del(names)
 
   lock_read()
 
+  local fail_to_delete = {} --- @type string[]
   for _, p in ipairs(plug_list) do
-    trigger_event(p, 'PackChangedPre', 'delete')
+    if not active_plugins[p.path] or opts.force then
+      trigger_event(p, 'PackChangedPre', 'delete')
 
-    vim.fs.rm(p.path, { recursive = true, force = true })
-    active_plugins[p.path] = nil
-    notify(("Removed plugin '%s'"):format(p.spec.name), 'INFO')
+      vim.fs.rm(p.path, { recursive = true, force = true })
+      active_plugins[p.path] = nil
+      notify(("Removed plugin '%s'"):format(p.spec.name), 'INFO')
 
-    plugin_lock.plugins[p.spec.name] = nil
+      plugin_lock.plugins[p.spec.name] = nil
 
-    trigger_event(p, 'PackChanged', 'delete')
+      trigger_event(p, 'PackChanged', 'delete')
+    else
+      fail_to_delete[#fail_to_delete + 1] = p.spec.name
+    end
   end
 
   lock_write()
+
+  if #fail_to_delete > 0 then
+    local plugs = table.concat(fail_to_delete, ', ')
+    local msg = ('Some plugins are active and were not deleted: %s.'):format(plugs)
+      .. ' Remove them from init.lua, restart, and try again.'
+    error(msg)
+  end
 end
 
 --- @inlinedoc

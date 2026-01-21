@@ -35,13 +35,6 @@ local changetracking = lsp._changetracking
 ---@nodoc
 lsp.rpc_response_error = lsp.rpc.rpc_response_error
 
-lsp._resolve_to_request = {
-  ['codeAction/resolve'] = 'textDocument/codeAction',
-  ['codeLens/resolve'] = 'textDocument/codeLens',
-  ['documentLink/resolve'] = 'textDocument/documentLink',
-  ['inlayHint/resolve'] = 'textDocument/inlayHint',
-}
-
 -- TODO improve handling of scratch buffers with LSP attached.
 
 --- Called by the client when trying to call a method that's not
@@ -345,12 +338,12 @@ end
 
 --- @nodoc
 --- @class vim.lsp.config
---- @field [string] vim.lsp.Config
+--- @field [string] vim.lsp.Config?
 --- @field package _configs table<string,vim.lsp.Config>
 lsp.config = setmetatable({ _configs = {} }, {
   --- @param self vim.lsp.config
   --- @param name string
-  --- @return vim.lsp.Config
+  --- @return vim.lsp.Config?
   __index = function(self, name)
     validate_config_name(name)
 

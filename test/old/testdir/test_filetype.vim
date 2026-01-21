@@ -141,7 +141,8 @@ func s:GetFilenameChecks() abort
     \ 'bdf': ['file.bdf'],
     \ 'beancount': ['file.beancount'],
     \ 'bib': ['file.bib'],
-    \ 'bicep': ['file.bicep', 'file.bicepparam'],
+    \ 'bicep': ['file.bicep'],
+    \ 'bicep-params': ['file.bicepparam'],
     \ 'bindzone': ['named.root', '/bind/db.file', '/named/db.file', 'any/bind/db.file', 'any/named/db.file', 'foobar.zone'],
     \ 'bitbake': ['file.bb', 'file.bbappend', 'file.bbclass', 'build/conf/local.conf', 'meta/conf/layer.conf', 'build/conf/bbappend.conf', 'meta-layer/conf/distro/foo.conf', 'project-spec/configs/zynqmp-generic-xczu7ev.conf'],
     \ 'blade': ['file.blade.php'],
@@ -241,6 +242,7 @@ func s:GetFilenameChecks() abort
     \ 'dictdconf': ['dictd.conf', 'dictdfile.conf', 'dictd-file.conf'],
     \ 'diff': ['file.diff', 'file.rej'],
     \ 'dircolors': ['.dir_colors', '.dircolors', '/etc/DIR_COLORS', 'any/etc/DIR_COLORS'],
+    \ 'djot': ['file.dj', 'file.djot'],
     \ 'dnsmasq': ['/etc/dnsmasq.conf', '/etc/dnsmasq.d/file', 'any/etc/dnsmasq.conf', 'any/etc/dnsmasq.d/file'],
     \ 'dockerfile': ['Containerfile', 'Dockerfile', 'dockerfile', 'file.Dockerfile', 'file.dockerfile', 'Dockerfile.debian', 'Containerfile.something'],
     \ 'dosbatch': ['file.bat'],
@@ -291,13 +293,14 @@ func s:GetFilenameChecks() abort
     \ 'falcon': ['file.fal'],
     \ 'fan': ['file.fan', 'file.fwt'],
     \ 'faust': ['file.dsp', 'file.lib'],
-    \ 'fennel': ['file.fnl', '.fennelrc', 'fennelrc'],
+    \ 'fennel': ['file.fnl', '.fennelrc', 'fennelrc', 'file.fnlm'],
     \ 'fetchmail': ['.fetchmailrc'],
     \ 'fga': ['file.fga'],
     \ 'fgl': ['file.4gl', 'file.4gh', 'file.m4gl'],
     \ 'firrtl': ['file.fir'],
     \ 'fish': ['file.fish'],
     \ 'flix': ['file.flix'],
+    \ 'fluent': ['file.ftl'],
     \ 'focexec': ['file.fex', 'file.focexec'],
     \ 'form': ['file.frm'],
     \ 'forth': ['file.ft', 'file.fth', 'file.4th'],
@@ -427,6 +430,8 @@ func s:GetFilenameChecks() abort
     \ 'kitty': ['kitty.conf', '~/.config/kitty/colorscheme.conf'],
     \ 'kivy': ['file.kv'],
     \ 'kix': ['file.kix'],
+    \ 'koka': ['file.kk'],
+    \ 'kos': ['file.kos'],
     \ 'kotlin': ['file.kt', 'file.ktm', 'file.kts'],
     \ 'krl': ['file.sub', 'file.Sub', 'file.SUB'],
     \ 'kscript': ['file.ks'],
@@ -572,6 +577,7 @@ func s:GetFilenameChecks() abort
     \ 'neomuttrc': ['Neomuttrc', '.neomuttrc', '.neomuttrc-file', '/.neomutt/neomuttrc', '/.neomutt/neomuttrc-file', 'Neomuttrc', 'Neomuttrc-file', 'any/.neomutt/neomuttrc', 'any/.neomutt/neomuttrc-file', 'neomuttrc', 'neomuttrc-file'],
     \ 'netrc': ['.netrc'],
     \ 'nginx': ['file.nginx', 'nginxfile.conf', 'filenginx.conf', 'any/etc/nginx/file', 'any/usr/local/nginx/conf/file', 'any/nginx/file.conf'],
+    \ 'nickel': ['file.ncl'],
     \ 'nim': ['file.nim', 'file.nims', 'file.nimble'],
     \ 'ninja': ['file.ninja'],
     \ 'nix': ['file.nix'],
@@ -667,7 +673,7 @@ func s:GetFilenameChecks() abort
     \ 'raku': ['file.pm6', 'file.p6', 'file.t6', 'file.pod6', 'file.raku', 'file.rakumod', 'file.rakudoc', 'file.rakutest'],
     \ 'raml': ['file.raml'],
     \ 'rapid': ['file.sysx', 'file.Sysx', 'file.SysX', 'file.SYSx', 'file.SYSX', 'file.modx', 'file.Modx', 'file.ModX', 'file.MODx', 'file.MODX'],
-    \ 'rasi': ['file.rasi'],
+    \ 'rasi': ['file.rasi', 'file.rasinc'],
     \ 'ratpoison': ['.ratpoisonrc', 'ratpoisonrc'],
     \ 'rbs': ['file.rbs'],
     \ 'rc': ['file.rc', 'file.rch'],
@@ -826,7 +832,34 @@ func s:GetFilenameChecks() abort
     \             'any/etc/systemd/system/.#', 'any/etc/systemd/system/.#-file',
     \             'any/etc/systemd/system/file.d/.#',
     \             'any/etc/systemd/system/file.d/.#-file',
-    \             'any/etc/systemd/system/file.d/file.conf'],
+    \             'any/etc/systemd/system/file.d/file.conf',
+    \             'any/containers/systemd/file.artifact',
+    \             'any/containers/systemd/file.build',
+    \             'any/containers/systemd/file.container',
+    \             'any/containers/systemd/file.image',
+    \             'any/containers/systemd/file.kube',
+    \             'any/containers/systemd/file.network',
+    \             'any/containers/systemd/file.pod',
+    \             'any/containers/systemd/file.volume',
+    \             'any/containers/systemd/users/any/file.artifact',
+    \             'any/containers/systemd/users/any/file.build',
+    \             'any/containers/systemd/users/any/file.container',
+    \             'any/containers/systemd/users/any/file.image',
+    \             'any/containers/systemd/users/any/file.kube',
+    \             'any/containers/systemd/users/any/file.network',
+    \             'any/containers/systemd/users/any/file.pod',
+    \             'any/containers/systemd/users/any/file.volume',
+    \             'any/containers/systemd/users/file.artifact',
+    \             'any/containers/systemd/users/file.build',
+    \             'any/containers/systemd/users/file.container',
+    \             'any/containers/systemd/users/file.image',
+    \             'any/containers/systemd/users/file.kube',
+    \             'any/containers/systemd/users/file.network',
+    \             'any/containers/systemd/users/file.pod',
+    \             'any/containers/systemd/users/file.volume',
+    \             'any/containers/systemd/some.d/file.conf',
+    \             'etc/containers/systemd/users/1111/some.d/file.conf',
+    \             'etc/containers/systemd/users/some.d/file.conf'],
     \ 'systemverilog': ['file.sv', 'file.svh'],
     \ 'tablegen': ['file.td'],
     \ 'tags': ['tags'],
@@ -850,7 +883,9 @@ func s:GetFilenameChecks() abort
     \ 'tf': ['file.tf', '.tfrc', 'tfrc'],
     \ 'thrift': ['file.thrift'],
     \ 'tidy': ['.tidyrc', 'tidyrc', 'tidy.conf'],
+    \ 'tiger': ['file.tig'],
     \ 'tilde': ['file.t.html'],
+    \ 'tiltfile': ['Tiltfile', 'tiltfile', 'file.Tiltfile', 'file.tiltfile', 'Tiltfile.debian'],
     \ 'tla': ['file.tla'],
     \ 'tli': ['file.tli'],
     \ 'tmux': ['tmuxfile.conf', '.tmuxfile.conf', '.tmux-file.conf', '.tmux.conf', 'tmux-file.conf', 'tmux.conf', 'tmux.conf.local'],
@@ -1161,6 +1196,34 @@ func Test_filetype_indent_off()
   call assert_equal(['filetype detection:ON  plugin:OFF  indent:OFF'],
         \ execute('filetype')->split("\n"))
   close
+endfunc
+
+func Test_undo_ftplugin_on_buffer_reuse()
+  filetype on
+
+  new
+  let b:undo_ftplugin = ":let g:var='exists'"
+  let g:bufnr = bufnr('%')
+  " no changes done to the buffer, so the buffer will be re-used
+  e $VIMRUNTIME/defaults.vim
+  call assert_equal(g:bufnr, bufnr('%'))
+  call assert_equal('exists', get(g:, 'var', 'fail'))
+  unlet! g:bufnr g:var
+
+  " try to wipe the buffer
+  enew
+  bw defaults.vim
+  let b:undo_ftplugin = ':bw'
+  call assert_fails(':e $VIMRUNTIME/defaults.vim', 'E937:')
+
+  " try to split the window
+  enew
+  bw defaults.vim
+  let b:undo_ftplugin = ':sp $VIMRUNTIME/defaults.vim'
+  call assert_fails(':e $VIMRUNTIME/defaults.vim', 'E242:')
+
+  bwipe!
+  filetype off
 endfunc
 
 """""""""""""""""""""""""""""""""""""""""""""""""

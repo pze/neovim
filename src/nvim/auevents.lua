@@ -109,7 +109,8 @@ return {
     StdinReadPre = false, -- before reading from stdin
     SwapExists = false, -- found existing swap file
     Syntax = false, -- syntax selected
-    TabClosed = false, -- a tab has closed
+    TabClosed = false, -- after closing a tab page
+    TabClosedPre = false, -- before closing a tab page
     TabEnter = false, -- after entering a tab page
     TabLeave = false, -- before leaving a tab page
     TabNew = false, -- when creating a new tab
@@ -138,7 +139,8 @@ return {
     WinClosed = true, -- after closing a window
     WinEnter = true, -- after entering a window
     WinLeave = true, -- before leaving a window
-    WinNew = false, -- when entering a new window
+    WinNewPre = false, -- before creating a new window
+    WinNew = false, -- after creating a new window
     WinResized = true, -- after a window was resized
     WinScrolled = true, -- after a window was scrolled or resized
   },
